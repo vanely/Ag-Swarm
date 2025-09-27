@@ -1,82 +1,56 @@
 # Agentic Software Development Swarm
 
+A scalable, AI-powered software development system that utilizes a swarm of specialized agents to replace traditional software development teams.
+
 ## Overview
 
-A cutting-edge multi-layered agentic software development framework that can compress 18 developer-days into 6 hours while maintaining enterprise-grade security and reliability. This system orchestrates AI agents in a collaborative swarm to autonomously plan, develop, test, and deploy software applications.
-
-## Core Architecture
-
-The system is built on three foundational pillars:
-
-**Intelligent Model Orchestration**
-
-- Leverages multiple LLMs (GPT-5, Claude Opus 4.1, Grok 4) with dynamic model switching
-
-- Routes tasks to optimal models based on complexity and domain expertise
-
-- Real-time performance monitoring per model per task type
-
-**Specialized Agent Roles**
-
-- Strategic Planning Agent for architecture and PRD generation
-
-- Frontend and Backend Development Agents
-
-- DevOps Integration Agent
-
-- Security Validation Agent
-
-- Quality Assurance Agent
-
-- Project Coordination Agent
-
-**Communication Architecture**
-
-- Kafka-based message passing between agents
-
-- Shared state management through vector databases
-
-- Multiple coordination protocols for different workflows
+The Agentic Software Development Swarm is a cutting-edge system that leverages multiple AI agents working in coordination to handle all aspects of the software development lifecycle. From planning and design to implementation, testing, and deployment, this system can automate the entire software development process.
 
 ## Key Features
 
-- **Autonomous Operation**: Sustains 200+ minute autonomous development sessions
+- **Multi-Agent Architecture**: Specialized agents for frontend, backend, DevOps, security, QA, and coordination
 
-- **Enterprise-Grade Security**: Zero-trust security model with comprehensive governance
+- **Layered Communication**: Efficient message passing and state sharing between agents
 
-- **Quality Assurance**: Multi-layered review process with specialized agent personas
+- **Memory Systems**: Vector databases and knowledge bases for persistent context
 
-- **Production Pipeline**: Complete workflow from requirements to deployment
+- **Model Orchestration**: Support for multiple AI models (GPT, Claude, Grok)
 
-- **Scalability**: Handles increasing project complexity with specialized extension agents
+- **Pipeline-Based Workflow**: Structured phases for planning, development, integration, and deployment
+
+- **Extensible**: Easy to add new specialized agents for specific domains
+
+## System Architecture
+
+The system is built with a modular design that allows agents to work both independently and collaboratively:
+
+- **Core Layer**: Handles orchestration, communication, memory, and security
+
+- **Agent Layer**: Both core and specialized agents that perform specific roles
+
+- **Model Layer**: AI model clients and orchestration
+
+- **Pipeline Layer**: Workflow management across development phases
 
 ## Getting Started
 
-```
-# Clone the repository
-git clone https://github.com/yourusername/agentic-dev-swarm.git
+1. $1
 
-# Install dependencies
-cd agentic-dev-swarm
-npm install
+2. $1
 
-# Configure your project
-cp config/project-template.json config/my-project.json
-# Edit my-project.json with your project details
+3. $1
 
-# Start the swarm
-npm start -- --config=config/my-project.json
-```
+4. $1
 
 ## Documentation
 
-For detailed documentation, please refer to the `/docs` directory:
+See the `docs/` directory for detailed documentation on:
 
-- [Architecture Overview](./docs/architecture.md)
+- [Architecture](./docs/architecture.md)
 
-- [Deployment Guide](./docs/deployment.md)
+- [Deployment](./docs/deployment.md)
 
-- [Security Framework](./docs/security.md)
+- [Security](./docs/security.md)
 
 - [Quality Assurance](./docs/quality-assurance.md)
 

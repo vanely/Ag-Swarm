@@ -1,751 +1,882 @@
-/**
- * State Manager for the Agentic Software Development Swarm
- * 
- * This module manages workflow state persistence, snapshots, and recovery.
- */
-
-const EventEmitter = require('events');
-const fs = require('fs').promises;
-const path = require('path');
 const logger = require('../../utils/logger');
+const SharedState = require('../communication/shared-state');
+const MessageQueue = require('../communication/message-queue');
 
-class StateManager extends EventEmitter {
-  constructor(config = {}) {
-    super();
-    this.config = {
-      persistenceEnabled: config.persistenceEnabled !== false,
-      persistenceInterval: config.persistenceInterval || 60000, // 1 minute
-      snapshotInterval: config.snapshotInterval || 600000, // 10 minutes
-      storageType: config.storageType || 'memory', // 'memory', 'file', 'database'
-      storagePath: config.storagePath || './data/state',
-      maxSnapshots: config.maxSnapshots || 10
+/**
+ * StateManager class responsible for managing the system state,
+ * tracking task status, and ensuring state consistency across agents
+ */
+class StateManager {
+  constructor() {
+    this.sharedState = new SharedState();
+    this.messageQueue = new MessageQueue();
+    
+    this.stateSchema = {
+      system: {
+        phase: { type: 'string', enum: ['initialization', 'planning', 'development', 'integration', 'deployment', 'completed'] },
+        status: { type: 'string', enum: ['idle', 'active', 'paused', 'error'] },
+        startTime: { type: 'number' },
+        lastUpdated: { type: 'number' }
+      },
+      agents: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['initializing', 'active', 'busy', 'error', 'inactive'] },
+          lastHeartbeat: { type: 'number' },
+          currentTasks: { type: 'array' }
+        }
+      },
+      tasks: {
+        type: 'object',
+        properties: {
+          pending: { type: 'array' },
+          inProgress: { type: 'array' },
+          completed: { type: 'array' },
+          failed: { type: 'array' }
+        }
+      },
+      artifacts: {
+        type: 'object',
+        properties: {
+          latest: { type: 'object' }
+        }
+      },
+      issues: {
+        type: 'array'
+      }
     };
     
-    // Initialize state storage
-    this.workflowStates = new Map();
-    this.snapshotTimestamps = new Map();
-    this.lastPersistenceTime = null;
-    this.lastSnapshotTime = null;
-    
-    // Set up persistence if enabled
-    if (this.config.persistenceEnabled) {
-      this.setupPersistence();
-    }
-    
-    logger.info('State Manager initialized');
-    logger.debug(`State Manager configuration: ${JSON.stringify(this.config)}`);
+    // Transition rules for state changes
+    this.transitionRules = {
+      system: {
+        phase: {
+          'initialization': ['planning'],
+          'planning': ['development'],
+          'development': ['integration'],
+          'integration': ['deployment'],
+          'deployment': ['completed'],
+          'completed': []
+        }
+      },
+      agents: {
+        status: {
+          'initializing': ['active', 'error'],
+          'active': ['busy', 'inactive', 'error'],
+          'busy': ['active', 'error'],
+          'error': ['active', 'inactive'],
+          'inactive': ['initializing']
+        }
+      }
+    };
   }
 
   /**
-   * Set up automatic state persistence and snapshots
+   * Initialize the state manager and set up initial system state
    */
-  setupPersistence() {
-    // Schedule periodic state persistence
-    this.persistenceTimer = setInterval(() => {
-      this.persistAllStates().catch(error => {
-        logger.error(`Error persisting states: ${error.message}`);
-      });
-    }, this.config.persistenceInterval);
-
-    // Schedule periodic snapshots
-    this.snapshotTimer = setInterval(() => {
-      this.createSnapshots().catch(error => {
-        logger.error(`Error creating snapshots: ${error.message}`);
-      });
-    }, this.config.snapshotInterval);
-
-    // Ensure storage directory exists for file storage
-    if (this.config.storageType === 'file') {
-      this.ensureStorageDirectories().catch(error => {
-        logger.error(`Error creating storage directories: ${error.message}`);
-      });
-    }
-    
-    // Load existing state if available
-    this.loadPersistedStates().catch(error => {
-      logger.error(`Error loading persisted states: ${error.message}`);
-    });
-
-    logger.info('State persistence enabled');
-  }
-
-  /**
-   * Ensure storage directories exist
-   */
-  async ensureStorageDirectories() {
-    if (this.config.storageType !== 'file') return;
-    
+  async initialize() {
     try {
-      const baseDir = this.config.storagePath;
-      const stateDir = path.join(baseDir, 'current');
-      const snapshotDir = path.join(baseDir, 'snapshots');
-
-      await fs.mkdir(baseDir, { recursive: true });
-      await fs.mkdir(stateDir, { recursive: true });
-      await fs.mkdir(snapshotDir, { recursive: true });
+      // Check for existing state
+      const existingState = await this.sharedState.get('system');
       
-      logger.debug('Storage directories created');
+      if (!existingState) {
+        // Set up initial system state
+        const initialState = {
+          phase: 'initialization',
+          status: 'idle',
+          startTime: Date.now(),
+          lastUpdated: Date.now()
+        };
+        
+        await this.sharedState.set('system', initialState);
+        
+        // Set up initial tasks state
+        await this.sharedState.set('tasks', {
+          pending: [],
+          inProgress: [],
+          completed: [],
+          failed: []
+        });
+        
+        // Set up initial artifacts state
+        await this.sharedState.set('artifacts', {
+          latest: {}
+        });
+        
+        // Set up initial issues state
+        await this.sharedState.set('issues', []);
+        
+        logger.info('StateManager initialized with default state');
+      } else {
+        logger.info('StateManager initialized with existing state');
+      }
+      
+      // Subscribe to state change events
+      this.messageQueue.subscribe('system.state_change_requested', this.handleStateChangeRequest.bind(this));
+      this.messageQueue.subscribe('agent.state_change_requested', this.handleAgentStateChangeRequest.bind(this));
+      this.messageQueue.subscribe('task.state_change_requested', this.handleTaskStateChangeRequest.bind(this));
+      
+      // Set up heartbeat monitoring
+      setInterval(this.monitorAgentHeartbeats.bind(this), 30000); // Check every 30 seconds
     } catch (error) {
-      logger.error(`Error creating storage directories: ${error.message}`);
+      logger.error(`Error initializing StateManager: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Initialize a new workflow's state
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @param {Object} initialState - Initial state object
+   * Get the current system state or a specific state component
+   * @param {String} component - Optional state component to retrieve
+   * @returns {Object} The requested state
    */
-  initializeWorkflowState(workflowId, initialState) {
-    // Don't overwrite existing state
-    if (this.workflowStates.has(workflowId)) {
-      throw new Error(`State for workflow ${workflowId} already exists`);
-    }
-    
-    // Add metadata to state
-    const stateWithMetadata = {
-      ...initialState,
-      _metadata: {
-        createdAt: Date.now(),
-        lastUpdated: Date.now(),
-        version: 1
+  async getState(component = null) {
+    try {
+      if (component) {
+        return await this.sharedState.get(component);
+      } else {
+        // Retrieve all state components
+        const system = await this.sharedState.get('system');
+        const agents = await this.sharedState.get('agents');
+        const tasks = await this.sharedState.get('tasks');
+        const artifacts = await this.sharedState.get('artifacts');
+        const issues = await this.sharedState.get('issues');
+        
+        return {
+          system,
+          agents,
+          tasks,
+          artifacts,
+          issues
+        };
       }
-    };
-    
-    // Save the state
-    this.workflowStates.set(workflowId, stateWithMetadata);
-    this.snapshotTimestamps.set(workflowId, []);
-    
-    logger.info(`Initialized state for workflow ${workflowId}`);
-    this.emit('state:initialized', { workflowId });
-    
-    // Persist immediately if enabled
-    if (this.config.persistenceEnabled) {
-      this.persistWorkflowState(workflowId).catch(error => {
-        logger.error(`Error persisting state for workflow ${workflowId}: ${error.message}`);
+    } catch (error) {
+      logger.error(`Error getting state: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Update a specific part of the system state
+   * @param {String} component - The state component to update
+   * @param {Object} update - The update to apply
+   * @param {Boolean} validate - Whether to validate the update
+   * @returns {Object} The updated state
+   */
+  async updateState(component, update, validate = true) {
+    try {
+      // Get current state for the component
+      const currentState = await this.sharedState.get(component) || {};
+      
+      // Validate the update if required
+      if (validate) {
+        const validationResult = this.validateStateUpdate(component, currentState, update);
+        
+        if (!validationResult.valid) {
+          throw new Error(`Invalid state update for ${component}: ${validationResult.reason}`);
+        }
+      }
+      
+      // Merge the update with the current state
+      const updatedState = this.mergeState(currentState, update);
+      
+      // Update the lastUpdated timestamp for system state
+      if (component === 'system') {
+        updatedState.lastUpdated = Date.now();
+      }
+      
+      // Store the updated state
+      await this.sharedState.set(component, updatedState);
+      
+      // Publish state change event
+      await this.messageQueue.publish(`state.${component}_updated`, {
+        component,
+        previousState: currentState,
+        currentState: updatedState
       });
-    }
-    
-    return stateWithMetadata;
-  }
-
-  /**
-   * Get the current state of a workflow
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @returns {Object|null} Current state or null if not found
-   */
-  getWorkflowState(workflowId) {
-    return this.workflowStates.get(workflowId) || null;
-  }
-
-  /**
-   * Update a workflow's state
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @param {Object} stateUpdates - State updates to apply
-   * @returns {Object} Updated state
-   */
-  updateWorkflowState(workflowId, stateUpdates) {
-    // Ensure workflow state exists
-    const currentState = this.workflowStates.get(workflowId);
-    
-    if (!currentState) {
-      throw new Error(`No state found for workflow ${workflowId}`);
-    }
-    
-    // Create a deep copy of the current state to avoid accidental mutations
-    const currentStateCopy = JSON.parse(JSON.stringify(currentState));
-    
-    // Handle special case of metadata updates
-    if (stateUpdates._metadata) {
-      currentStateCopy._metadata = {
-        ...currentStateCopy._metadata,
-        ...stateUpdates._metadata
-      };
-      delete stateUpdates._metadata;
-    }
-    
-    // Apply updates, excluding metadata which was already handled
-    const updatedState = {
-      ...currentStateCopy,
-      ...stateUpdates,
-      _metadata: {
-        ...currentStateCopy._metadata,
-        lastUpdated: Date.now(),
-        version: currentStateCopy._metadata.version + 1
-      }
-    };
-    
-    // Save the updated state
-    this.workflowStates.set(workflowId, updatedState);
-    
-    logger.debug(`Updated state for workflow ${workflowId} (version ${updatedState._metadata.version})`);
-    this.emit('state:updated', { 
-      workflowId, 
-      version: updatedState._metadata.version
-    });
-    
-    return updatedState;
-  }
-
-  /**
-   * Create a state snapshot for a workflow
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @returns {Object} The snapshot that was created
-   */
-  async createWorkflowSnapshot(workflowId) {
-    const state = this.workflowStates.get(workflowId);
-    
-    if (!state) {
-      throw new Error(`No state found for workflow ${workflowId}`);
-    }
-    
-    // Create snapshot with timestamp
-    const timestamp = Date.now();
-    const snapshot = {
-      ...JSON.parse(JSON.stringify(state)), // Deep copy
-      _snapshotMetadata: {
-        timestamp,
-        originalVersion: state._metadata.version
-      }
-    };
-    
-    // If using file storage, save snapshot to file
-    if (this.config.storageType === 'file') {
-      await this.saveSnapshotToFile(workflowId, snapshot);
-    }
-    
-    // Keep track of snapshot timestamps
-    const timestamps = this.snapshotTimestamps.get(workflowId) || [];
-    timestamps.push(timestamp);
-    this.snapshotTimestamps.set(workflowId, timestamps);
-    
-    // Clean up old snapshots if we have too many
-    if (timestamps.length > this.config.maxSnapshots) {
-      await this.cleanupOldSnapshots(workflowId);
-    }
-    
-    logger.info(`Created snapshot for workflow ${workflowId} at ${new Date(timestamp).toISOString()}`);
-    this.emit('state:snapshot-created', { 
-      workflowId, 
-      timestamp,
-      version: state._metadata.version
-    });
-    
-    return snapshot;
-  }
-
-  /**
-   * Restore a workflow state from a snapshot
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @param {number} timestamp - Timestamp of the snapshot to restore
-   * @returns {Object} The restored state
-   */
-  async restoreWorkflowSnapshot(workflowId, timestamp) {
-    let snapshot;
-    
-    // Get snapshot from storage
-    if (this.config.storageType === 'file') {
-      snapshot = await this.loadSnapshotFromFile(workflowId, timestamp);
-    } else {
-      throw new Error('Snapshot restoration is only supported with file storage');
-    }
-    
-    if (!snapshot) {
-      throw new Error(`No snapshot found for workflow ${workflowId} at timestamp ${timestamp}`);
-    }
-    
-    // Remove snapshot metadata and update the regular metadata
-    const { _snapshotMetadata, ...snapshotData } = snapshot;
-    
-    const restoredState = {
-      ...snapshotData,
-      _metadata: {
-        ...snapshotData._metadata,
-        lastUpdated: Date.now(),
-        restoredFrom: timestamp,
-        version: snapshotData._metadata.version + 1
-      }
-    };
-    
-    // Save the restored state
-    this.workflowStates.set(workflowId, restoredState);
-    
-    logger.info(`Restored workflow ${workflowId} state from snapshot at ${new Date(timestamp).toISOString()}`);
-    this.emit('state:restored', { 
-      workflowId, 
-      fromTimestamp: timestamp,
-      toVersion: restoredState._metadata.version
-    });
-    
-    return restoredState;
-  }
-
-  /**
-   * Persist a specific workflow's state to storage
-   * 
-   * @param {string} workflowId - ID of the workflow
-   */
-  async persistWorkflowState(workflowId) {
-    if (!this.config.persistenceEnabled) return;
-    
-    const state = this.workflowStates.get(workflowId);
-    
-    if (!state) {
-      throw new Error(`No state found for workflow ${workflowId}`);
-    }
-    
-    try {
-      if (this.config.storageType === 'file') {
-        await this.saveStateToFile(workflowId, state);
-      } else if (this.config.storageType === 'database') {
-        await this.saveStateToDatabase(workflowId, state);
-      }
       
-      logger.debug(`Persisted state for workflow ${workflowId}`);
-      this.emit('state:persisted', { workflowId });
+      logger.debug(`Updated ${component} state`);
+      
+      return updatedState;
     } catch (error) {
-      logger.error(`Error persisting state for workflow ${workflowId}: ${error.message}`);
+      logger.error(`Error updating state for ${component}: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Persist all workflow states to storage
+   * Merge current state with updates
+   * @param {Object} currentState - Current state
+   * @param {Object} update - Update to apply
+   * @returns {Object} Merged state
    */
-  async persistAllStates() {
-    if (!this.config.persistenceEnabled) return;
-    
-    const workflowIds = Array.from(this.workflowStates.keys());
-    
-    if (workflowIds.length === 0) {
-      return;
+  mergeState(currentState, update) {
+    // For arrays, replace the entire array
+    if (Array.isArray(currentState) && Array.isArray(update)) {
+      return [...update];
     }
     
-    logger.debug(`Persisting all states (${workflowIds.length} workflows)`);
-    
-    try {
-      await Promise.all(
-        workflowIds.map(workflowId => this.persistWorkflowState(workflowId))
-      );
-      
-      this.lastPersistenceTime = Date.now();
-      logger.info('All states persisted successfully');
-      this.emit('state:all-persisted', { count: workflowIds.length });
-    } catch (error) {
-      logger.error(`Error persisting all states: ${error.message}`);
-      throw error;
+    // For primitive values or non-objects, replace with update
+    if (typeof currentState !== 'object' || currentState === null || 
+        typeof update !== 'object' || update === null) {
+      return update;
     }
+    
+    // For objects, merge recursively
+    const result = { ...currentState };
+    
+    for (const [key, value] of Object.entries(update)) {
+      if (typeof value === 'object' && value !== null && typeof result[key] === 'object' && result[key] !== null) {
+        result[key] = this.mergeState(result[key], value);
+      } else {
+        result[key] = value;
+      }
+    }
+    
+    return result;
   }
 
   /**
-   * Create snapshots for all workflows
+   * Validate a state update against the schema and transition rules
+   * @param {String} component - The state component being updated
+   * @param {Object} currentState - Current state
+   * @param {Object} update - Update to apply
+   * @returns {Object} Validation result with valid flag and reason
    */
-  async createSnapshots() {
-    if (!this.config.persistenceEnabled) return;
-    
-    const workflowIds = Array.from(this.workflowStates.keys());
-    
-    if (workflowIds.length === 0) {
-      return;
+  validateStateUpdate(component, currentState, update) {
+    // Skip validation for components without schema or rules
+    if (!this.stateSchema[component]) {
+      return { valid: true };
     }
     
-    logger.debug(`Creating snapshots for all workflows (${workflowIds.length} workflows)`);
-    
-    try {
-      await Promise.all(
-        workflowIds.map(workflowId => this.createWorkflowSnapshot(workflowId))
-      );
+    // Check for phase transitions
+    if (component === 'system' && update.phase && currentState.phase !== update.phase) {
+      const validTransitions = this.transitionRules.system.phase[currentState.phase] || [];
       
-      this.lastSnapshotTime = Date.now();
-      logger.info('All snapshots created successfully');
-      this.emit('state:all-snapshots-created', { count: workflowIds.length });
-    } catch (error) {
-      logger.error(`Error creating snapshots: ${error.message}`);
-      throw error;
+      if (!validTransitions.includes(update.phase)) {
+        return {
+          valid: false,
+          reason: `Invalid phase transition from '${currentState.phase}' to '${update.phase}'`
+        };
+      }
     }
+    
+    // Check for agent status transitions
+    if (component === 'agents' && update.status && currentState.status !== update.status) {
+      const validTransitions = this.transitionRules.agents.status[currentState.status] || [];
+      
+      if (!validTransitions.includes(update.status)) {
+        return {
+          valid: false,
+          reason: `Invalid agent status transition from '${currentState.status}' to '${update.status}'`
+        };
+      }
+    }
+    
+    return { valid: true };
   }
 
   /**
-   * Remove a workflow's state from the manager
-   * 
-   * @param {string} workflowId - ID of the workflow
+   * Get the current system phase
+   * @returns {String} Current system phase
    */
-  removeWorkflowState(workflowId) {
-    if (!this.workflowStates.has(workflowId)) {
+  async getCurrentPhase() {
+    const system = await this.sharedState.get('system');
+    return system ? system.phase : 'initialization';
+  }
+
+  /**
+   * Transition the system to a new phase
+   * @param {String} newPhase - The new phase to transition to
+   * @returns {Boolean} Success status of the transition
+   */
+  async transitionToPhase(newPhase) {
+    try {
+      const currentPhase = await this.getCurrentPhase();
+      
+      // Validate the phase transition
+      const validTransitions = this.transitionRules.system.phase[currentPhase] || [];
+      
+      if (!validTransitions.includes(newPhase)) {
+        logger.error(`Invalid phase transition from '${currentPhase}' to '${newPhase}'`);
+        return false;
+      }
+      
+      // Update the system state with the new phase
+      await this.updateState('system', { phase: newPhase });
+      
+      // Publish phase transition event
+      await this.messageQueue.publish('system.phase_changed', {
+        previousPhase: currentPhase,
+        currentPhase: newPhase,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Transitioned from phase '${currentPhase}' to '${newPhase}'`);
+      return true;
+    } catch (error) {
+      logger.error(`Error transitioning to phase ${newPhase}: ${error.message}`);
       return false;
     }
-    
-    this.workflowStates.delete(workflowId);
-    
-    logger.info(`Removed state for workflow ${workflowId}`);
-    this.emit('state:removed', { workflowId });
-    
-    // Remove from storage if persistence is enabled
-    if (this.config.persistenceEnabled) {
-      this.removeStateFromStorage(workflowId).catch(error => {
-        logger.error(`Error removing persisted state for workflow ${workflowId}: ${error.message}`);
+  }
+
+  /**
+   * Register an agent in the state system
+   * @param {String} agentName - The name of the agent
+   * @param {Object} agentInfo - Information about the agent
+   */
+  async registerAgent(agentName, agentInfo) {
+    try {
+      // Get current agents state
+      const agents = await this.sharedState.get('agents') || {};
+      
+      // Add or update the agent
+      agents[agentName] = {
+        ...agentInfo,
+        status: 'active',
+        lastHeartbeat: Date.now(),
+        currentTasks: []
+      };
+      
+      // Save updated agents state
+      await this.sharedState.set('agents', agents);
+      
+      // Publish agent registration event
+      await this.messageQueue.publish('agent.registered', {
+        agentName,
+        agentInfo: agents[agentName]
       });
+      
+      logger.info(`Registered agent ${agentName} in state system`);
+    } catch (error) {
+      logger.error(`Error registering agent ${agentName}: ${error.message}`);
+      throw error;
     }
-    
-    return true;
   }
 
   /**
-   * Load persisted states from storage
+   * Update an agent's status
+   * @param {String} agentName - The name of the agent
+   * @param {String} status - The new status
    */
-  async loadPersistedStates() {
-    if (!this.config.persistenceEnabled) return;
-    
+  async updateAgentStatus(agentName, status) {
     try {
-      if (this.config.storageType === 'file') {
-        await this.loadStatesFromFile();
-      } else if (this.config.storageType === 'database') {
-        await this.loadStatesFromDatabase();
+      // Get current agents state
+      const agents = await this.sharedState.get('agents') || {};
+      
+      // Ensure agent exists
+      if (!agents[agentName]) {
+        throw new Error(`Agent ${agentName} is not registered`);
       }
       
-      logger.info(`Loaded ${this.workflowStates.size} persisted workflow states`);
-      this.emit('state:loaded', { count: this.workflowStates.size });
+      // Get current status
+      const currentStatus = agents[agentName].status;
+      
+      // Validate the status transition
+      const validTransitions = this.transitionRules.agents.status[currentStatus] || [];
+      
+      if (!validTransitions.includes(status)) {
+        throw new Error(`Invalid agent status transition from '${currentStatus}' to '${status}'`);
+      }
+      
+      // Update the agent's status
+      agents[agentName].status = status;
+      agents[agentName].lastHeartbeat = Date.now();
+      
+      // Save updated agents state
+      await this.sharedState.set('agents', agents);
+      
+      // Publish agent status change event
+      await this.messageQueue.publish('agent.status_changed', {
+        agentName,
+        previousStatus: currentStatus,
+        currentStatus: status,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Updated agent ${agentName} status to '${status}'`);
     } catch (error) {
-      logger.error(`Error loading persisted states: ${error.message}`);
+      logger.error(`Error updating agent ${agentName} status: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Save a state to file storage
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @param {Object} state - State to save
+   * Handle agent heartbeats and update state
+   * @param {String} agentName - The name of the agent
    */
-  async saveStateToFile(workflowId, state) {
+  async updateAgentHeartbeat(agentName) {
     try {
-      await this.ensureStorageDirectories();
+      // Get current agents state
+      const agents = await this.sharedState.get('agents') || {};
       
-      const stateDir = path.join(this.config.storagePath, 'current');
-      const filePath = path.join(stateDir, `${workflowId}.json`);
+      // Ensure agent exists
+      if (!agents[agentName]) {
+        throw new Error(`Agent ${agentName} is not registered`);
+      }
       
-      await fs.writeFile(
-        filePath,
-        JSON.stringify(state, null, 2),
-        'utf8'
-      );
+      // Update the agent's heartbeat timestamp
+      agents[agentName].lastHeartbeat = Date.now();
       
-      logger.debug(`Saved state to file: ${filePath}`);
+      // Save updated agents state
+      await this.sharedState.set('agents', agents);
+      
+      logger.debug(`Updated heartbeat for agent ${agentName}`);
     } catch (error) {
-      logger.error(`Error saving state to file for workflow ${workflowId}: ${error.message}`);
-      throw error;
+      logger.error(`Error updating agent ${agentName} heartbeat: ${error.message}`);
     }
   }
 
   /**
-   * Save a snapshot to file storage
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @param {Object} snapshot - Snapshot to save
+   * Monitor agent heartbeats and detect inactive agents
    */
-  async saveSnapshotToFile(workflowId, snapshot) {
+  async monitorAgentHeartbeats() {
     try {
-      await this.ensureStorageDirectories();
+      // Get current agents state
+      const agents = await this.sharedState.get('agents') || {};
       
-      const timestamp = snapshot._snapshotMetadata.timestamp;
-      const snapshotDir = path.join(this.config.storagePath, 'snapshots', workflowId);
-      const filePath = path.join(snapshotDir, `${timestamp}.json`);
+      // Check each agent's heartbeat
+      const now = Date.now();
+      const heartbeatTimeout = 60000; // 1 minute timeout
       
-      await fs.mkdir(snapshotDir, { recursive: true });
-      
-      await fs.writeFile(
-        filePath,
-        JSON.stringify(snapshot, null, 2),
-        'utf8'
-      );
-      
-      logger.debug(`Saved snapshot to file: ${filePath}`);
-    } catch (error) {
-      logger.error(`Error saving snapshot to file for workflow ${workflowId}: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Load all states from file storage
-   */
-  async loadStatesFromFile() {
-    try {
-      await this.ensureStorageDirectories();
-      
-      const stateDir = path.join(this.config.storagePath, 'current');
-      const files = await fs.readdir(stateDir);
-      
-      for (const file of files) {
-        if (!file.endsWith('.json')) continue;
+      for (const [agentName, agentInfo] of Object.entries(agents)) {
+        // Skip inactive agents
+        if (agentInfo.status === 'inactive') {
+          continue;
+        }
         
-        const workflowId = file.replace('.json', '');
-        const filePath = path.join(stateDir, file);
-        
-        try {
-          const data = await fs.readFile(filePath, 'utf8');
-          const state = JSON.parse(data);
+        // Check if heartbeat has timed out
+        if (now - agentInfo.lastHeartbeat > heartbeatTimeout) {
+          logger.warn(`Agent ${agentName} heartbeat timeout`);
           
-          this.workflowStates.set(workflowId, state);
+          // Mark agent as error
+          await this.updateAgentStatus(agentName, 'error');
           
-          // Also load snapshot timestamps
-          await this.loadSnapshotTimestamps(workflowId);
+          // Add to issues
+          await this.addIssue({
+            type: 'agent_timeout',
+            agentName,
+            message: `Agent ${agentName} heartbeat timeout`,
+            timestamp: now,
+            resolved: false
+          });
           
-          logger.debug(`Loaded state from file: ${filePath}`);
-        } catch (error) {
-          logger.error(`Error loading state from file ${filePath}: ${error.message}`);
+          // Reassign tasks from the agent
+          await this.reassignAgentTasks(agentName);
         }
       }
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        // Directory doesn't exist yet, which is fine for a fresh start
-        logger.debug('No persisted states found');
+      logger.error(`Error monitoring agent heartbeats: ${error.message}`);
+    }
+  }
+
+  /**
+   * Add a task to the system
+   * @param {Object} task - The task to add
+   * @returns {Object} The added task with ID
+   */
+  async addTask(task) {
+    try {
+      // Get current tasks state
+      const tasks = await this.sharedState.get('tasks') || {
+        pending: [],
+        inProgress: [],
+        completed: [],
+        failed: []
+      };
+      
+      // Generate task ID if not provided
+      if (!task.id) {
+        task.id = `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      }
+      
+      // Add task metadata
+      task.status = 'pending';
+      task.createdAt = Date.now();
+      task.updatedAt = Date.now();
+      
+      // Add to pending tasks
+      tasks.pending.push(task);
+      
+      // Save updated tasks state
+      await this.sharedState.set('tasks', tasks);
+      
+      // Publish task added event
+      await this.messageQueue.publish('task.added', {
+        task,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Added task ${task.id} to the system`);
+      
+      return task;
+    } catch (error) {
+      logger.error(`Error adding task: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Update a task's status
+   * @param {String} taskId - The ID of the task
+   * @param {String} status - The new status
+   * @param {Object} additionalData - Additional data to update
+   * @returns {Object} The updated task
+   */
+  async updateTaskStatus(taskId, status, additionalData = {}) {
+    try {
+      // Get current tasks state
+      const tasks = await this.sharedState.get('tasks') || {
+        pending: [],
+        inProgress: [],
+        completed: [],
+        failed: []
+      };
+      
+      // Find the task in the appropriate list
+      let task = null;
+      let sourceList = null;
+      
+      for (const listName of ['pending', 'inProgress', 'completed', 'failed']) {
+        const index = tasks[listName].findIndex(t => t.id === taskId);
+        
+        if (index >= 0) {
+          task = tasks[listName][index];
+          sourceList = listName;
+          
+          // Remove from source list
+          tasks[listName].splice(index, 1);
+          break;
+        }
+      }
+      
+      if (!task) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+      
+      // Update task status and data
+      task.status = status;
+      task.updatedAt = Date.now();
+      
+      // Add additional data
+      for (const [key, value] of Object.entries(additionalData)) {
+        task[key] = value;
+      }
+      
+      // Add to appropriate target list
+      let targetList = 'pending';
+      
+      switch (status) {
+        case 'pending':
+          targetList = 'pending';
+          break;
+        case 'in_progress':
+          targetList = 'inProgress';
+          break;
+        case 'completed':
+          targetList = 'completed';
+          break;
+        case 'failed':
+          targetList = 'failed';
+          break;
+      }
+      
+      tasks[targetList].push(task);
+      
+      // Save updated tasks state
+      await this.sharedState.set('tasks', tasks);
+      
+      // Publish task status change event
+      await this.messageQueue.publish('task.status_changed', {
+        taskId,
+        previousStatus: task.previousStatus || sourceList,
+        currentStatus: status,
+        task,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Updated task ${taskId} status to '${status}'`);
+      
+      return task;
+    } catch (error) {
+      logger.error(`Error updating task ${taskId} status: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Reassign tasks from an agent
+   * @param {String} agentName - The name of the agent
+   */
+  async reassignAgentTasks(agentName) {
+    try {
+      // Get current tasks state
+      const tasks = await this.sharedState.get('tasks') || {
+        pending: [],
+        inProgress: [],
+        completed: [],
+        failed: []
+      };
+      
+      // Find in-progress tasks assigned to the agent
+      const agentTasks = tasks.inProgress.filter(task => task.assignedAgent === agentName);
+      
+      if (agentTasks.length === 0) {
         return;
       }
       
-      logger.error(`Error loading states from files: ${error.message}`);
+      logger.info(`Reassigning ${agentTasks.length} tasks from agent ${agentName}`);
+      
+      // Move tasks back to pending
+      for (const task of agentTasks) {
+        await this.updateTaskStatus(task.id, 'pending', {
+          previousStatus: 'in_progress',
+          previousAgent: agentName,
+          assignedAgent: null,
+          needsReassignment: true
+        });
+      }
+      
+      // Publish task reassignment event
+      await this.messageQueue.publish('task.reassignment_needed', {
+        agentName,
+        taskCount: agentTasks.length,
+        taskIds: agentTasks.map(task => task.id),
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      logger.error(`Error reassigning tasks from agent ${agentName}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Add an issue to the system
+   * @param {Object} issue - The issue to add
+   * @returns {Object} The added issue with ID
+   */
+  async addIssue(issue) {
+    try {
+      // Get current issues
+      const issues = await this.sharedState.get('issues') || [];
+      
+      // Generate issue ID if not provided
+      if (!issue.id) {
+        issue.id = `issue-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      }
+      
+      // Add issue metadata
+      issue.createdAt = issue.timestamp || Date.now();
+      issue.updatedAt = issue.timestamp || Date.now();
+      
+      // Add to issues
+      issues.push(issue);
+      
+      // Save updated issues
+      await this.sharedState.set('issues', issues);
+      
+      // Publish issue added event
+      await this.messageQueue.publish('issue.added', {
+        issue,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Added issue ${issue.id} to the system`);
+      
+      return issue;
+    } catch (error) {
+      logger.error(`Error adding issue: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Load snapshot timestamps for a workflow
-   * 
-   * @param {string} workflowId - ID of the workflow
+   * Resolve an issue
+   * @param {String} issueId - The ID of the issue
+   * @param {Object} resolution - Resolution information
+   * @returns {Object} The resolved issue
    */
-  async loadSnapshotTimestamps(workflowId) {
+  async resolveIssue(issueId, resolution) {
     try {
-      const snapshotDir = path.join(this.config.storagePath, 'snapshots', workflowId);
+      // Get current issues
+      const issues = await this.sharedState.get('issues') || [];
       
-      try {
-        const files = await fs.readdir(snapshotDir);
-        
-        const timestamps = files
-          .filter(file => file.endsWith('.json'))
-          .map(file => parseInt(file.replace('.json', ''), 10))
-          .filter(timestamp => !isNaN(timestamp))
-          .sort((a, b) => b - a); // Sort descending (newest first)
-        
-        this.snapshotTimestamps.set(workflowId, timestamps);
-        
-        logger.debug(`Loaded ${timestamps.length} snapshot timestamps for workflow ${workflowId}`);
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          // No snapshots yet for this workflow
-          this.snapshotTimestamps.set(workflowId, []);
-          return;
-        }
-        
-        throw error;
+      // Find the issue
+      const issueIndex = issues.findIndex(issue => issue.id === issueId);
+      
+      if (issueIndex < 0) {
+        throw new Error(`Issue ${issueId} not found`);
       }
+      
+      // Update the issue
+      const issue = issues[issueIndex];
+      
+      issue.resolved = true;
+      issue.resolution = resolution;
+      issue.updatedAt = Date.now();
+      issue.resolvedAt = Date.now();
+      
+      // Save updated issues
+      await this.sharedState.set('issues', issues);
+      
+      // Publish issue resolved event
+      await this.messageQueue.publish('issue.resolved', {
+        issueId,
+        resolution,
+        issue,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Resolved issue ${issueId}`);
+      
+      return issue;
     } catch (error) {
-      logger.error(`Error loading snapshot timestamps for workflow ${workflowId}: ${error.message}`);
-      this.snapshotTimestamps.set(workflowId, []);
-    }
-  }
-
-  /**
-   * Load a specific snapshot from file storage
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @param {number} timestamp - Timestamp of the snapshot
-   * @returns {Object} The loaded snapshot
-   */
-  async loadSnapshotFromFile(workflowId, timestamp) {
-    try {
-      const snapshotDir = path.join(this.config.storagePath, 'snapshots', workflowId);
-      const filePath = path.join(snapshotDir, `${timestamp}.json`);
-      
-      const data = await fs.readFile(filePath, 'utf8');
-      const snapshot = JSON.parse(data);
-      
-      logger.debug(`Loaded snapshot from file: ${filePath}`);
-      
-      return snapshot;
-    } catch (error) {
-      logger.error(`Error loading snapshot for workflow ${workflowId} at timestamp ${timestamp}: ${error.message}`);
+      logger.error(`Error resolving issue ${issueId}: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Clean up old snapshots beyond the maximum allowed
-   * 
-   * @param {string} workflowId - ID of the workflow
+   * Track an artifact in the system
+   * @param {String} artifactType - The type of artifact
+   * @param {String} artifactId - The ID of the artifact
+   * @param {Object} metadata - Artifact metadata
+   * @returns {Object} The tracked artifact
    */
-  async cleanupOldSnapshots(workflowId) {
-    const timestamps = this.snapshotTimestamps.get(workflowId) || [];
-    
-    if (timestamps.length <= this.config.maxSnapshots) {
-      return;
-    }
-    
-    // Sort timestamps descending (newest first)
-    timestamps.sort((a, b) => b - a);
-    
-    // Keep only the most recent ones
-    const timestampsToKeep = timestamps.slice(0, this.config.maxSnapshots);
-    const timestampsToRemove = timestamps.slice(this.config.maxSnapshots);
-    
-    // Update the stored list
-    this.snapshotTimestamps.set(workflowId, timestampsToKeep);
-    
-    // Remove the old snapshots from storage
-    if (this.config.storageType === 'file') {
-      await Promise.all(
-        timestampsToRemove.map(timestamp => this.removeSnapshotFile(workflowId, timestamp))
-      );
-    }
-    
-    logger.debug(`Cleaned up ${timestampsToRemove.length} old snapshots for workflow ${workflowId}`);
-  }
-
-  /**
-   * Remove a snapshot file from storage
-   * 
-   * @param {string} workflowId - ID of the workflow
-   * @param {number} timestamp - Timestamp of the snapshot
-   */
-  async removeSnapshotFile(workflowId, timestamp) {
+  async trackArtifact(artifactType, artifactId, metadata = {}) {
     try {
-      const snapshotDir = path.join(this.config.storagePath, 'snapshots', workflowId);
-      const filePath = path.join(snapshotDir, `${timestamp}.json`);
+      // Get current artifacts state
+      const artifacts = await this.sharedState.get('artifacts') || {
+        latest: {}
+      };
       
-      await fs.unlink(filePath);
+      // Add artifact
+      const artifact = {
+        id: artifactId,
+        type: artifactType,
+        createdAt: Date.now(),
+        ...metadata
+      };
       
-      logger.debug(`Removed snapshot file: ${filePath}`);
-    } catch (error) {
-      logger.error(`Error removing snapshot file for workflow ${workflowId} at timestamp ${timestamp}: ${error.message}`);
-    }
-  }
-
-  /**
-   * Remove persisted state from storage
-   * 
-   * @param {string} workflowId - ID of the workflow
-   */
-  async removeStateFromStorage(workflowId) {
-    if (!this.config.persistenceEnabled) return;
-    
-    try {
-      if (this.config.storageType === 'file') {
-        await this.removeStateFile(workflowId);
-        await this.removeAllSnapshotFiles(workflowId);
-      } else if (this.config.storageType === 'database') {
-        await this.removeStateFromDatabase(workflowId);
+      // Set as latest for this type
+      artifacts.latest[artifactType] = artifact;
+      
+      // Track all artifacts of this type if not already tracking
+      if (!artifacts[artifactType]) {
+        artifacts[artifactType] = [];
       }
       
-      logger.debug(`Removed persisted state for workflow ${workflowId}`);
+      artifacts[artifactType].push(artifact);
+      
+      // Save updated artifacts state
+      await this.sharedState.set('artifacts', artifacts);
+      
+      // Publish artifact tracked event
+      await this.messageQueue.publish('artifact.tracked', {
+        artifactType,
+        artifactId,
+        artifact,
+        timestamp: Date.now()
+      });
+      
+      logger.info(`Tracked artifact ${artifactId} of type ${artifactType}`);
+      
+      return artifact;
     } catch (error) {
-      logger.error(`Error removing persisted state for workflow ${workflowId}: ${error.message}`);
+      logger.error(`Error tracking artifact: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Remove a state file from storage
-   * 
-   * @param {string} workflowId - ID of the workflow
+   * Get the latest artifact of a specific type
+   * @param {String} artifactType - The type of artifact
+   * @returns {Object} The latest artifact or null
    */
-  async removeStateFile(workflowId) {
+  async getLatestArtifact(artifactType) {
     try {
-      const stateDir = path.join(this.config.storagePath, 'current');
-      const filePath = path.join(stateDir, `${workflowId}.json`);
+      // Get current artifacts state
+      const artifacts = await this.sharedState.get('artifacts') || {
+        latest: {}
+      };
       
-      await fs.unlink(filePath);
-      
-      logger.debug(`Removed state file: ${filePath}`);
+      return artifacts.latest[artifactType] || null;
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        // File doesn't exist, which is fine
-        return;
-      }
-      
-      logger.error(`Error removing state file for workflow ${workflowId}: ${error.message}`);
+      logger.error(`Error getting latest artifact of type ${artifactType}: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Remove all snapshot files for a workflow
-   * 
-   * @param {string} workflowId - ID of the workflow
+   * Handle system state change request
+   * @param {Object} message - The state change request message
    */
-  async removeAllSnapshotFiles(workflowId) {
+  async handleStateChangeRequest(message) {
     try {
-      const snapshotDir = path.join(this.config.storagePath, 'snapshots', workflowId);
+      const { component, update, requesterId } = message;
       
-      try {
-        const files = await fs.readdir(snapshotDir);
-        
-        await Promise.all(
-          files.map(file => fs.unlink(path.join(snapshotDir, file)))
-        );
-        
-        // Try to remove the directory as well
-        await fs.rmdir(snapshotDir);
-        
-        logger.debug(`Removed all snapshot files for workflow ${workflowId}`);
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          // Directory doesn't exist, which is fine
-          return;
-        }
-        
-        throw error;
-      }
+      logger.info(`State change requested by ${requesterId} for component ${component}`);
+      
+      // Update the state
+      await this.updateState(component, update);
     } catch (error) {
-      logger.error(`Error removing snapshot files for workflow ${workflowId}: ${error.message}`);
-    }
-  }
-
-  /**
-   * Database storage methods (placeholders - implementation would depend on the database)
-   */
-  
-  async saveStateToDatabase(workflowId, state) {
-    // Placeholder for database implementation
-    logger.debug(`Database storage not implemented`);
-  }
-
-  async loadStatesFromDatabase() {
-    // Placeholder for database implementation
-    logger.debug(`Database storage not implemented`);
-  }
-
-  async removeStateFromDatabase(workflowId) {
-    // Placeholder for database implementation
-    logger.debug(`Database storage not implemented`);
-  }
-
-  /**
-   * Clean up resources when shutting down
-   */
-  async shutdown() {
-    if (this.persistenceTimer) {
-      clearInterval(this.persistenceTimer);
-    }
-    
-    if (this.snapshotTimer) {
-      clearInterval(this.snapshotTimer);
-    }
-    
-    if (this.config.persistenceEnabled) {
-      // Persist all states one last time
-      try {
-        await this.persistAllStates();
-        logger.info('Final state persistence completed before shutdown');
-      } catch (error) {
-        logger.error(`Error during final state persistence: ${error.message}`);
+      logger.error(`Error handling state change request: ${error.message}`);
+      
+      // Notify requestor about the error
+      if (message.requesterId) {
+        await this.messageQueue.publish(`${message.requesterId}.state_change_failed`, {
+          component: message.component,
+          error: error.message
+        });
       }
     }
-    
-    logger.info('State Manager shut down');
+  }
+
+  /**
+   * Handle agent state change request
+   * @param {Object} message - The agent state change request message
+   */
+  async handleAgentStateChangeRequest(message) {
+    try {
+      const { agentName, status, requesterId } = message;
+      
+      logger.info(`Agent state change requested by ${requesterId} for agent ${agentName}`);
+      
+      // Update the agent status
+      await this.updateAgentStatus(agentName, status);
+    } catch (error) {
+      logger.error(`Error handling agent state change request: ${error.message}`);
+      
+      // Notify requestor about the error
+      if (message.requesterId) {
+        await this.messageQueue.publish(`${message.requesterId}.agent_state_change_failed`, {
+          agentName: message.agentName,
+          error: error.message
+        });
+      }
+    }
+  }
+
+  /**
+   * Handle task state change request
+   * @param {Object} message - The task state change request message
+   */
+  async handleTaskStateChangeRequest(message) {
+    try {
+      const { taskId, status, additionalData, requesterId } = message;
+      
+      logger.info(`Task state change requested by ${requesterId} for task ${taskId}`);
+      
+      // Update the task status
+      await this.updateTaskStatus(taskId, status, additionalData);
+    } catch (error) {
+      logger.error(`Error handling task state change request: ${error.message}`);
+      
+      // Notify requestor about the error
+      if (message.requesterId) {
+        await this.messageQueue.publish(`${message.requesterId}.task_state_change_failed`, {
+          taskId: message.taskId,
+          error: error.message
+        });
+      }
+    }
   }
 }
 

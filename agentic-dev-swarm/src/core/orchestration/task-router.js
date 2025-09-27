@@ -1,500 +1,431 @@
-/**
- * Task Router for the Agentic Software Development Swarm
- * 
- * This module handles routing tasks to the appropriate agents based on specialization.
- */
-
-const EventEmitter = require('events');
 const logger = require('../../utils/logger');
+const SharedState = require('../communication/shared-state');
+const KnowledgeBase = require('../memory/knowledge-base');
 
-class TaskRouter extends EventEmitter {
-  constructor(config = {}) {
-    super();
-    this.config = config;
-    this.agentRegistry = new Map();
-    this.specializationMap = new Map();
-    this.defaultAgent = null;
+/**
+ * TaskRouter class responsible for routing tasks to the most appropriate agents
+ * based on agent capabilities, current load, and task requirements
+ */
+class TaskRouter {
+  constructor() {
+    this.sharedState = new SharedState();
+    this.knowledgeBase = new KnowledgeBase();
     
-    // Initialize with config
-    this.assignmentStrategy = config.assignmentStrategy || 'specialization';
-    this.loadBalancing = config.loadBalancing !== false;
-    this.prioritization = config.prioritization !== false;
-    
-    logger.info('Task Router initialized');
-    logger.debug(`Task Router configuration: ${JSON.stringify(config)}`);
-  }
-  
-  /**
-   * Register an agent with the task router
-   * 
-   * @param {string} agentId - Unique identifier for the agent
-   * @param {Object} agent - The agent instance
-   * @param {Array<string>} specializations - List of task types this agent can handle
-   * @param {Object} capabilities - Additional capabilities of the agent
-   */
-  registerAgent(agentId, agent, specializations = [], capabilities = {}) {
-    if (this.agentRegistry.has(agentId)) {
-      logger.warn(`Agent ${agentId} is already registered`);
-      return false;
-    }
-    
-    // Register the agent
-    this.agentRegistry.set(agentId, {
-      agent,
-      specializations,
-      capabilities,
-      status: 'idle',
-      activeTaskCount: 0,
-      maxConcurrentTasks: capabilities.maxConcurrentTasks || 3,
-      taskHistory: [],
-    });
-    
-    // Map specializations to agents
-    for (const spec of specializations) {
-      if (!this.specializationMap.has(spec)) {
-        this.specializationMap.set(spec, []);
-      }
+    // Task routing rules and priorities
+    this.routingRules = {
+      // Default agent mappings for task types
+      defaultAgentMapping: {
+        'planning': 'planning-agent',
+        'architecture': 'planning-agent',
+        'frontend_development': 'frontend-agent',
+        'ui_design': 'frontend-agent',
+        'backend_development': 'backend-agent',
+        'api_design': 'backend-agent',
+        'database': 'backend-agent',
+        'infrastructure': 'devops-agent',
+        'deployment': 'devops-agent',
+        'security_audit': 'security-agent',
+        'testing': 'qa-agent',
+        'coordination': 'coordination-agent',
+        'data_engineering': 'data-engineering-agent',
+        'mobile_development': 'mobile-agent',
+        'performance_optimization': 'performance-agent'
+      },
       
-      this.specializationMap.get(spec).push(agentId);
-    }
-    
-    // Set as default agent if first one or explicitly marked as default
-    if (!this.defaultAgent || capabilities.isDefault) {
-      this.defaultAgent = agentId;
-    }
-    
-    logger.info(`Agent ${agentId} registered with specializations: ${specializations.join(', ')}`);
-    this.emit('agent:registered', { agentId, specializations });
-    
-    return true;
+      // Priority rules for task assignment
+      priorityRules: [
+        { factor: 'task_criticality', weight: 0.4 },
+        { factor: 'agent_expertise', weight: 0.3 },
+        { factor: 'agent_load', weight: 0.2 },
+        { factor: 'dependency_proximity', weight: 0.1 }
+      ]
+    };
   }
-  
+
   /**
-   * Unregister an agent from the task router
-   * 
-   * @param {string} agentId - ID of the agent to unregister
+   * Initialize the task router with custom routing rules if provided
+   * @param {Object} customRules - Custom routing rules to override defaults
    */
-  unregisterAgent(agentId) {
-    const agentInfo = this.agentRegistry.get(agentId);
-    
-    if (!agentInfo) {
-      logger.warn(`Cannot unregister agent ${agentId}: not found`);
-      return false;
-    }
-    
-    // Remove agent from specialization mappings
-    for (const spec of agentInfo.specializations) {
-      const agents = this.specializationMap.get(spec);
-      
-      if (agents) {
-        const index = agents.indexOf(agentId);
-        
-        if (index !== -1) {
-          agents.splice(index, 1);
-        }
-        
-        if (agents.length === 0) {
-          this.specializationMap.delete(spec);
-        }
-      }
-    }
-    
-    // Remove from registry
-    this.agentRegistry.delete(agentId);
-    
-    // Update default agent if necessary
-    if (this.defaultAgent === agentId) {
-      this.defaultAgent = this.agentRegistry.size > 0 ? 
-        Array.from(this.agentRegistry.keys())[0] : null;
-    }
-    
-    logger.info(`Agent ${agentId} unregistered`);
-    this.emit('agent:unregistered', { agentId });
-    
-    return true;
-  }
-  
-  /**
-   * Update the status of an agent
-   * 
-   * @param {string} agentId - ID of the agent to update
-   * @param {string} status - New status ('idle', 'busy', 'offline')
-   */
-  updateAgentStatus(agentId, status) {
-    const agentInfo = this.agentRegistry.get(agentId);
-    
-    if (!agentInfo) {
-      logger.warn(`Cannot update agent ${agentId} status: not found`);
-      return false;
-    }
-    
-    const previousStatus = agentInfo.status;
-    agentInfo.status = status;
-    
-    logger.debug(`Agent ${agentId} status updated from ${previousStatus} to ${status}`);
-    this.emit('agent:status-changed', { 
-      agentId, 
-      previousStatus,
-      currentStatus: status 
-    });
-    
-    return true;
-  }
-  
-  /**
-   * Finds the best agent to handle a specific task
-   * 
-   * @param {Object} task - Task to be assigned
-   * @returns {string|null} ID of the selected agent, or null if no suitable agent found
-   */
-  findBestAgentForTask(task) {
-    // Extract task type/specialization
-    const taskType = task.type || 'default';
-    
-    // Get agents that can handle this task type
-    const specializedAgents = this.specializationMap.get(taskType) || [];
-    
-    if (specializedAgents.length === 0) {
-      logger.warn(`No specialized agents found for task type: ${taskType}`);
-      return this.defaultAgent;
-    }
-    
-    // Filter available agents (not offline)
-    const availableAgents = specializedAgents
-      .map(agentId => {
-        const info = this.agentRegistry.get(agentId);
-        return { agentId, info };
-      })
-      .filter(({ info }) => info.status !== 'offline');
-    
-    if (availableAgents.length === 0) {
-      logger.warn(`No available agents found for task type: ${taskType}`);
-      return null;
-    }
-    
-    // Apply the selected assignment strategy
-    switch (this.assignmentStrategy) {
-      case 'specialization':
-        return this.assignBySpecialization(task, availableAgents);
-        
-      case 'load-balanced':
-        return this.assignByLoadBalancing(task, availableAgents);
-        
-      case 'priority':
-        return this.assignByPriority(task, availableAgents);
-        
-      case 'learning-curve':
-        return this.assignByLearningCurve(task, availableAgents);
-        
-      default:
-        logger.warn(`Unknown assignment strategy: ${this.assignmentStrategy}, using specialization`);
-        return this.assignBySpecialization(task, availableAgents);
-    }
-  }
-  
-  /**
-   * Assigns a task based on agent specialization
-   * 
-   * @param {Object} task - The task to assign
-   * @param {Array} availableAgents - List of available agents with their info
-   * @returns {string} ID of the selected agent
-   */
-  assignBySpecialization(task, availableAgents) {
-    // First, check for idle specialized agents
-    const idleSpecialists = availableAgents
-      .filter(({ info }) => info.status === 'idle');
-    
-    if (idleSpecialists.length > 0) {
-      // Find the most specialized agent (by capabilities match)
-      return this.findMostSpecializedAgent(task, idleSpecialists);
-    }
-    
-    // No idle agents, find the least busy one
-    if (this.loadBalancing) {
-      return this.findLeastBusyAgent(availableAgents);
-    }
-    
-    // Just pick the first available agent
-    return availableAgents[0].agentId;
-  }
-  
-  /**
-   * Assigns a task based on agent load balancing
-   * 
-   * @param {Object} task - The task to assign
-   * @param {Array} availableAgents - List of available agents with their info
-   * @returns {string} ID of the selected agent
-   */
-  assignByLoadBalancing(task, availableAgents) {
-    return this.findLeastBusyAgent(availableAgents);
-  }
-  
-  /**
-   * Assigns a task based on priority
-   * 
-   * @param {Object} task - The task to assign
-   * @param {Array} availableAgents - List of available agents with their info
-   * @returns {string} ID of the selected agent
-   */
-  assignByPriority(task, availableAgents) {
-    // Sort agents by priority (assuming higher priority is better)
-    const prioritizedAgents = [...availableAgents]
-      .sort((a, b) => 
-        (b.info.capabilities.priority || 0) - (a.info.capabilities.priority || 0)
-      );
-    
-    // Task priority might override agent selection
-    const taskPriority = task.priority || 'normal';
-    
-    if (taskPriority === 'high') {
-      // For high priority tasks, pick the highest priority agent regardless of load
-      return prioritizedAgents[0].agentId;
-    }
-    
-    // For normal/low priority, balance between priority and load
-    const topAgents = prioritizedAgents.slice(0, Math.ceil(prioritizedAgents.length / 3));
-    return this.findLeastBusyAgent(topAgents);
-  }
-  
-  /**
-   * Assigns a task based on learning curve (agent's experience with similar tasks)
-   * 
-   * @param {Object} task - The task to assign
-   * @param {Array} availableAgents - List of available agents with their info
-   * @returns {string} ID of the selected agent
-   */
-  assignByLearningCurve(task, availableAgents) {
-    const taskType = task.type || 'default';
-    
-    // Map agents to their experience score for this task type
-    const agentsWithExperience = availableAgents.map(({ agentId, info }) => {
-      // Count how many similar tasks this agent has handled
-      const relevantTaskCount = info.taskHistory.filter(t => t.type === taskType).length;
-      
-      // Calculate success rate for this task type
-      const relevantTasks = info.taskHistory.filter(t => t.type === taskType);
-      const successfulTasks = relevantTasks.filter(t => t.success).length;
-      const successRate = relevantTasks.length > 0 ? successfulTasks / relevantTasks.length : 0;
-      
-      // Calculate experience score (combination of relevant task count and success rate)
-      const experienceScore = (relevantTaskCount * 0.7) + (successRate * 0.3);
-      
-      return { agentId, info, experienceScore };
-    });
-    
-    // Sort by experience score (higher is better)
-    agentsWithExperience.sort((a, b) => b.experienceScore - a.experienceScore);
-    
-    // Take the top 3 (or fewer if not available)
-    const topAgents = agentsWithExperience.slice(0, Math.min(3, agentsWithExperience.length));
-    
-    // From top agents, pick the least busy one
-    return this.findLeastBusyAgent(topAgents);
-  }
-  
-  /**
-   * Finds the most specialized agent for a task
-   * 
-   * @param {Object} task - The task to assign
-   * @param {Array} agents - List of agents to consider
-   * @returns {string} ID of the most specialized agent
-   */
-  findMostSpecializedAgent(task, agents) {
-    // Calculate a specialization score for each agent based on capability matching
-    const taskRequirements = task.requirements || {};
-    
-    const agentsWithScore = agents.map(({ agentId, info }) => {
-      let score = 0;
-      
-      // Match task requirements against agent capabilities
-      for (const [req, value] of Object.entries(taskRequirements)) {
-        if (info.capabilities[req] === value) {
-          score += 1;
-        }
-      }
-      
-      // Bonus for agents specialized in this exact task type
-      if (info.specializations.includes(task.type)) {
-        score += 3;
-      }
-      
-      return { agentId, score };
-    });
-    
-    // Sort by score (higher is better)
-    agentsWithScore.sort((a, b) => b.score - a.score);
-    
-    return agentsWithScore[0].agentId;
-  }
-  
-  /**
-   * Finds the least busy agent from a list
-   * 
-   * @param {Array} agents - List of agents to consider
-   * @returns {string} ID of the least busy agent
-   */
-  findLeastBusyAgent(agents) {
-    // Sort by active task count (lower is better)
-    const sortedAgents = [...agents].sort((a, b) => {
-      // Calculate load ratio (active tasks / max concurrent tasks)
-      const loadA = a.info.activeTaskCount / a.info.maxConcurrentTasks;
-      const loadB = b.info.activeTaskCount / b.info.maxConcurrentTasks;
-      
-      return loadA - loadB;
-    });
-    
-    return sortedAgents[0].agentId;
-  }
-  
-  /**
-   * Routes a task to an appropriate agent and executes it
-   * 
-   * @param {Object} task - The task to route and execute
-   * @returns {Promise<any>} The result of the task execution
-   */
-  async routeTask(task) {
-    // Validate task
-    if (!task || typeof task !== 'object') {
-      throw new Error('Invalid task: must be an object');
-    }
-    
-    if (!task.id) {
-      task.id = `task_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    }
-    
-    logger.info(`Routing task ${task.id} of type ${task.type || 'default'}`);
-    
-    // Find the best agent
-    const assignedAgentId = this.findBestAgentForTask(task);
-    
-    if (!assignedAgentId) {
-      throw new Error(`No suitable agent found for task ${task.id} of type ${task.type || 'default'}`);
-    }
-    
-    // Get the agent
-    const agentInfo = this.agentRegistry.get(assignedAgentId);
-    
-    if (!agentInfo) {
-      throw new Error(`Agent ${assignedAgentId} not found in registry`);
-    }
-    
-    // Update agent status
-    const wasIdle = agentInfo.status === 'idle';
-    agentInfo.activeTaskCount++;
-    
-    if (agentInfo.activeTaskCount >= agentInfo.maxConcurrentTasks) {
-      agentInfo.status = 'busy';
-    } else if (wasIdle) {
-      agentInfo.status = 'active';
-    }
-    
-    this.emit('task:assigned', { 
-      taskId: task.id,
-      agentId: assignedAgentId,
-      taskType: task.type || 'default'
-    });
-    
-    logger.info(`Task ${task.id} assigned to agent ${assignedAgentId}`);
-    
+  async initialize(customRules = null) {
     try {
-      // Execute the task
-      const startTime = Date.now();
-      const result = await agentInfo.agent.executeTask(task);
-      const endTime = Date.now();
-      const executionTime = endTime - startTime;
+      // Load any existing routing rules from the knowledge base
+      const existingRules = await this.knowledgeBase.retrieveKnowledge('orchestration.routing_rules');
       
-      // Update agent info
-      agentInfo.activeTaskCount--;
-      agentInfo.taskHistory.push({
-        taskId: task.id,
-        type: task.type || 'default',
-        startTime,
-        endTime,
-        executionTime,
-        success: true
-      });
-      
-      // Update agent status
-      if (agentInfo.activeTaskCount === 0) {
-        agentInfo.status = 'idle';
+      if (existingRules) {
+        this.routingRules = {
+          ...this.routingRules,
+          ...existingRules
+        };
+        logger.info('TaskRouter initialized with existing routing rules from knowledge base');
       }
       
-      this.emit('task:completed', { 
-        taskId: task.id,
-        agentId: assignedAgentId,
-        executionTime
-      });
-      
-      logger.info(`Task ${task.id} completed by agent ${assignedAgentId} in ${executionTime}ms`);
-      
-      return result;
+      // Apply any custom rules passed during initialization
+      if (customRules) {
+        this.routingRules = {
+          ...this.routingRules,
+          ...customRules
+        };
+        
+        // Store updated rules in the knowledge base
+        await this.knowledgeBase.storeKnowledge('orchestration.routing_rules', this.routingRules);
+        logger.info('TaskRouter initialized with custom routing rules');
+      }
     } catch (error) {
-      // Update agent info
-      agentInfo.activeTaskCount--;
-      agentInfo.taskHistory.push({
-        taskId: task.id,
-        type: task.type || 'default',
-        startTime: Date.now(),
-        endTime: Date.now(),
-        executionTime: 0,
-        success: false,
-        error: error.message
-      });
-      
-      // Update agent status
-      if (agentInfo.activeTaskCount === 0) {
-        agentInfo.status = 'idle';
-      }
-      
-      this.emit('task:failed', { 
-        taskId: task.id,
-        agentId: assignedAgentId,
-        error
-      });
-      
-      logger.error(`Task ${task.id} failed execution by agent ${assignedAgentId}: ${error.message}`);
-      
+      logger.error(`Error initializing TaskRouter: ${error.message}`);
       throw error;
     }
   }
-  
+
   /**
-   * Gets a list of all registered agents and their statuses
-   * 
-   * @returns {Array} Array of agent information
+   * Route a task to the most appropriate agent
+   * @param {Object} task - The task to route
+   * @param {Object} agentRegistry - Registry of available agents
+   * @returns {String} The name of the agent to assign the task to
    */
-  getAgentStatuses() {
-    return Array.from(this.agentRegistry.entries()).map(([agentId, info]) => ({
-      agentId,
-      status: info.status,
-      specializations: info.specializations,
-      activeTaskCount: info.activeTaskCount,
-      maxConcurrentTasks: info.maxConcurrentTasks
-    }));
+  async routeTask(task, agentRegistry) {
+    try {
+      logger.info(`Routing task: ${task.id} of type ${task.type}`);
+      
+      // Get candidate agents based on task type
+      const candidateAgents = await this.getCandidateAgents(task, agentRegistry);
+      
+      if (candidateAgents.length === 0) {
+        throw new Error(`No candidate agents available for task type: ${task.type}`);
+      }
+      
+      // For tasks with explicit agent assignment, use that assignment
+      if (task.assignTo && agentRegistry[task.assignTo]) {
+        return task.assignTo;
+      }
+      
+      // Score each candidate agent
+      const scoredAgents = await this.scoreAgents(task, candidateAgents, agentRegistry);
+      
+      // Sort agents by score (highest first)
+      scoredAgents.sort((a, b) => b.score - a.score);
+      
+      // Return the highest scoring agent
+      return scoredAgents[0].name;
+    } catch (error) {
+      logger.error(`Error routing task ${task.id}: ${error.message}`);
+      throw error;
+    }
   }
-  
+
   /**
-   * Gets detailed information about a specific agent
-   * 
-   * @param {string} agentId - ID of the agent
-   * @returns {Object|null} Agent information or null if not found
+   * Get candidate agents for a task based on its type and requirements
+   * @param {Object} task - The task to find candidates for
+   * @param {Object} agentRegistry - Registry of available agents
+   * @returns {Array} List of candidate agent names
    */
-  getAgentDetails(agentId) {
-    const agentInfo = this.agentRegistry.get(agentId);
+  async getCandidateAgents(task, agentRegistry) {
+    // Start with the default mapping based on task type
+    let candidateAgents = [];
     
-    if (!agentInfo) {
-      return null;
+    // Add default agent for this task type if available
+    const defaultAgent = this.routingRules.defaultAgentMapping[task.type];
+    if (defaultAgent && agentRegistry[defaultAgent]) {
+      candidateAgents.push(defaultAgent);
     }
     
-    return {
-      agentId,
-      status: agentInfo.status,
-      specializations: agentInfo.specializations,
-      capabilities: agentInfo.capabilities,
-      activeTaskCount: agentInfo.activeTaskCount,
-      maxConcurrentTasks: agentInfo.maxConcurrentTasks,
-      taskHistory: agentInfo.taskHistory.slice(-10) // Return last 10 tasks
+    // Add agents that have explicitly registered capability for this task type
+    for (const [agentName, agentInfo] of Object.entries(agentRegistry)) {
+      if (agentInfo.capabilities && 
+          agentInfo.capabilities.includes(task.type) && 
+          !candidateAgents.includes(agentName)) {
+        candidateAgents.push(agentName);
+      }
+    }
+    
+    // If no candidates yet, add agents from the agent's category
+    if (candidateAgents.length === 0) {
+      const taskCategory = task.type.split('_')[0]; // e.g., 'frontend' from 'frontend_component'
+      
+      for (const [taskType, agentName] of Object.entries(this.routingRules.defaultAgentMapping)) {
+        if (taskType.startsWith(taskCategory) && 
+            agentRegistry[agentName] && 
+            !candidateAgents.includes(agentName)) {
+          candidateAgents.push(agentName);
+        }
+      }
+    }
+    
+    // If still no candidates, add any agent with a 'generic' capability
+    if (candidateAgents.length === 0) {
+      for (const [agentName, agentInfo] of Object.entries(agentRegistry)) {
+        if (agentInfo.capabilities && 
+            agentInfo.capabilities.includes('generic') && 
+            !candidateAgents.includes(agentName)) {
+          candidateAgents.push(agentName);
+        }
+      }
+    }
+    
+    // Filter out inactive agents
+    return candidateAgents.filter(agentName => {
+      const agent = agentRegistry[agentName];
+      return agent && agent.status === 'active';
+    });
+  }
+
+  /**
+   * Score agents based on various factors to determine the best agent for a task
+   * @param {Object} task - The task to assign
+   * @param {Array} candidateAgents - List of candidate agent names
+   * @param {Object} agentRegistry - Registry of available agents
+   * @returns {Array} List of agents with scores
+   */
+  async scoreAgents(task, candidateAgents, agentRegistry) {
+    const scoredAgents = [];
+    
+    // Get current agent workloads
+    const agentWorkloads = await this.sharedState.get('system.agent_workloads') || {};
+    
+    // Get task dependencies
+    const taskDependencies = task.dependencies || [];
+    
+    // Score each candidate agent
+    for (const agentName of candidateAgents) {
+      const agent = agentRegistry[agentName];
+      
+      // Skip if agent not found or not active
+      if (!agent || agent.status !== 'active') {
+        continue;
+      }
+      
+      // Calculate base scores for each factor
+      const expertiseScore = this.calculateExpertiseScore(task, agent);
+      const loadScore = this.calculateLoadScore(agentName, agentWorkloads);
+      const dependencyScore = this.calculateDependencyScore(task, agentName, agentRegistry);
+      const criticalityScore = this.calculateCriticalityScore(task, agent);
+      
+      // Apply weights from priority rules
+      const weightedScore = 
+        (expertiseScore * this.getFactorWeight('agent_expertise')) +
+        (loadScore * this.getFactorWeight('agent_load')) +
+        (dependencyScore * this.getFactorWeight('dependency_proximity')) +
+        (criticalityScore * this.getFactorWeight('task_criticality'));
+      
+      // Add to scored agents
+      scoredAgents.push({
+        name: agentName,
+        score: weightedScore,
+        expertiseScore,
+        loadScore,
+        dependencyScore,
+        criticalityScore
+      });
+    }
+    
+    return scoredAgents;
+  }
+
+  /**
+   * Calculate expertise score - how well the agent's expertise matches the task
+   * @param {Object} task - The task to assign
+   * @param {Object} agent - The agent to score
+   * @returns {Number} Expertise score (0-1)
+   */
+  calculateExpertiseScore(task, agent) {
+    // Base score if agent's primary role matches task type
+    let score = 0;
+    
+    // Check if the agent's name or description contains the task type
+    const taskType = task.type.toLowerCase();
+    const agentName = agent.agentName.toLowerCase();
+    const agentDescription = (agent.agentDescription || '').toLowerCase();
+    
+    if (agentName.includes(taskType) || taskType.includes(agentName.replace('-agent', ''))) {
+      score += 0.7;
+    }
+    
+    if (agentDescription.includes(taskType)) {
+      score += 0.2;
+    }
+    
+    // Check specific capabilities if available
+    if (agent.capabilities) {
+      if (agent.capabilities.includes(task.type)) {
+        score += 0.3;
+      }
+      
+      // Check if agent has all required skills for the task
+      if (task.requiredSkills) {
+        const matchingSkills = task.requiredSkills.filter(skill => 
+          agent.capabilities.includes(skill)
+        ).length;
+        
+        // Add score based on percentage of matching skills
+        if (task.requiredSkills.length > 0) {
+          score += 0.3 * (matchingSkills / task.requiredSkills.length);
+        }
+      }
+    }
+    
+    // Cap score at 1
+    return Math.min(score, 1);
+  }
+
+  /**
+   * Calculate load score - how available the agent is to take on new tasks
+   * @param {String} agentName - The name of the agent
+   * @param {Object} agentWorkloads - Current workloads of all agents
+   * @returns {Number} Load score (0-1)
+   */
+  calculateLoadScore(agentName, agentWorkloads) {
+    const maxTasks = 5; // Assume agents can handle up to 5 tasks simultaneously
+    const currentTasks = agentWorkloads[agentName] || 0;
+    
+    // Higher score for agents with fewer tasks
+    return Math.max(0, 1 - (currentTasks / maxTasks));
+  }
+
+  /**
+   * Calculate dependency score - whether agent has worked on dependent tasks
+   * @param {Object} task - The task to assign
+   * @param {String} agentName - The name of the agent
+   * @param {Object} agentRegistry - Registry of available agents
+   * @returns {Number} Dependency score (0-1)
+   */
+  calculateDependencyScore(task, agentName, agentRegistry) {
+    // If task has no dependencies, give neutral score
+    if (!task.dependencies || task.dependencies.length === 0) {
+      return 0.5;
+    }
+    
+    let dependencyScore = 0;
+    let totalDependencies = task.dependencies.length;
+    
+    // Check if agent has worked on dependent tasks
+    for (const dependencyId of task.dependencies) {
+      const agent = agentRegistry[agentName];
+      
+      if (agent.completedTasks && agent.completedTasks.includes(dependencyId)) {
+        dependencyScore += 1;
+      }
+    }
+    
+    // Calculate average score across all dependencies
+    return dependencyScore / totalDependencies;
+  }
+
+  /**
+   * Calculate criticality score - whether the agent is suited for critical tasks
+   * @param {Object} task - The task to assign
+   * @param {Object} agent - The agent to score
+   * @returns {Number} Criticality score (0-1)
+   */
+  calculateCriticalityScore(task, agent) {
+    const taskPriority = task.priority || 'medium';
+    const priorityValues = {
+      'low': 0.3,
+      'medium': 0.5,
+      'high': 0.7,
+      'critical': 1.0
     };
+    
+    const priorityValue = priorityValues[taskPriority] || 0.5;
+    
+    // Agents with higher reliability ratings get preference for critical tasks
+    const agentReliability = agent.reliability || 0.5;
+    
+    // For high priority tasks, prioritize reliable agents
+    if (priorityValue >= 0.7) {
+      return agentReliability;
+    } 
+    // For lower priority tasks, give slightly higher scores to less-reliable agents
+    // to balance workload (as long as they meet a minimum threshold)
+    else if (agentReliability >= 0.4) {
+      return 1 - (0.5 * agentReliability);
+    } else {
+      return 0.3; // Low score for unreliable agents
+    }
+  }
+
+  /**
+   * Get the weight for a specific routing factor
+   * @param {String} factorName - The name of the factor
+   * @returns {Number} The weight (0-1)
+   */
+  getFactorWeight(factorName) {
+    const rule = this.routingRules.priorityRules.find(r => r.factor === factorName);
+    return rule ? rule.weight : 0;
+  }
+
+  /**
+   * Update agent workload after task assignment
+   * @param {String} agentName - The name of the agent
+   * @param {Number} change - The change in workload (positive for increase, negative for decrease)
+   */
+  async updateAgentWorkload(agentName, change = 1) {
+    try {
+      // Get current workloads
+      const agentWorkloads = await this.sharedState.get('system.agent_workloads') || {};
+      
+      // Update workload for the specified agent
+      agentWorkloads[agentName] = (agentWorkloads[agentName] || 0) + change;
+      
+      // Ensure workload doesn't go below 0
+      if (agentWorkloads[agentName] < 0) {
+        agentWorkloads[agentName] = 0;
+      }
+      
+      // Save updated workloads
+      await this.sharedState.set('system.agent_workloads', agentWorkloads);
+      
+      logger.debug(`Updated workload for ${agentName}: ${agentWorkloads[agentName]}`);
+    } catch (error) {
+      logger.error(`Error updating agent workload: ${error.message}`);
+    }
+  }
+
+  /**
+   * Update routing rules based on performance feedback
+   * @param {Object} feedback - Feedback about routing performance
+   */
+  async updateRoutingRules(feedback) {
+    try {
+      // Update weights based on feedback
+      if (feedback.factorWeights) {
+        for (const [factor, weight] of Object.entries(feedback.factorWeights)) {
+          const ruleIndex = this.routingRules.priorityRules.findIndex(r => r.factor === factor);
+          
+          if (ruleIndex >= 0) {
+            this.routingRules.priorityRules[ruleIndex].weight = weight;
+          } else {
+            this.routingRules.priorityRules.push({
+              factor,
+              weight
+            });
+          }
+        }
+        
+        // Normalize weights
+        const totalWeight = this.routingRules.priorityRules.reduce((sum, rule) => sum + rule.weight, 0);
+        
+        if (totalWeight > 0) {
+          this.routingRules.priorityRules.forEach(rule => {
+            rule.weight = rule.weight / totalWeight;
+          });
+        }
+      }
+      
+      // Update agent mappings
+      if (feedback.agentMappings) {
+        this.routingRules.defaultAgentMapping = {
+          ...this.routingRules.defaultAgentMapping,
+          ...feedback.agentMappings
+        };
+      }
+      
+      // Store updated rules in the knowledge base
+      await this.knowledgeBase.storeKnowledge('orchestration.routing_rules', this.routingRules);
+      
+      logger.info('Updated task routing rules based on feedback');
+    } catch (error) {
+      logger.error(`Error updating routing rules: ${error.message}`);
+      throw error;
+    }
   }
 }
 
