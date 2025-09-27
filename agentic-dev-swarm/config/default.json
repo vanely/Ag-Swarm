@@ -1,0 +1,230 @@
+{
+  "system": {
+    "name": "Agentic Software Development Swarm",
+    "version": "1.0.0",
+    "environment": "development"
+  },
+  "orchestration": {
+    "workflow": {
+      "defaultPattern": "sequential",
+      "availablePatterns": [
+        "sequential",
+        "concurrent",
+        "hierarchical"
+      ]
+    },
+    "taskRouter": {
+      "assignmentStrategy": "specialization",
+      "loadBalancing": true,
+      "prioritization": true
+    },
+    "stateManager": {
+      "persistenceEnabled": true,
+      "persistenceInterval": 60000,
+      "snapshotInterval": 600000
+    },
+    "errorHandler": {
+      "maxRetries": 3,
+      "retryDelay": 5000,
+      "errorLogging": true,
+      "automaticRollback": true
+    }
+  },
+  "agents": {
+    "commonSettings": {
+      "maxConcurrentTasks": 3,
+      "timeoutMs": 300000,
+      "retryEnabled": true
+    },
+    "core": {
+      "planningAgent": {
+        "enabled": true,
+        "defaultModel": "claude-opus-4.1",
+        "maxContextLength": 100000
+      },
+      "frontendAgent": {
+        "enabled": true,
+        "defaultModel": "gpt-5",
+        "maxContextLength": 50000
+      },
+      "backendAgent": {
+        "enabled": true,
+        "defaultModel": "claude-opus-4.1",
+        "maxContextLength": 50000
+      },
+      "devopsAgent": {
+        "enabled": true,
+        "defaultModel": "gpt-5",
+        "maxContextLength": 30000
+      },
+      "securityAgent": {
+        "enabled": true,
+        "defaultModel": "claude-opus-4.1",
+        "maxContextLength": 30000
+      },
+      "qaAgent": {
+        "enabled": true,
+        "defaultModel": "grok-4",
+        "maxContextLength": 30000
+      },
+      "coordinationAgent": {
+        "enabled": true,
+        "defaultModel": "gpt-5",
+        "maxContextLength": 100000
+      }
+    },
+    "specialized": {
+      "dataEngineeringAgent": {
+        "enabled": false,
+        "defaultModel": "claude-opus-4.1",
+        "maxContextLength": 50000
+      },
+      "mobileAgent": {
+        "enabled": false,
+        "defaultModel": "gpt-5",
+        "maxContextLength": 50000
+      },
+      "performanceAgent": {
+        "enabled": false,
+        "defaultModel": "gpt-5",
+        "maxContextLength": 30000
+      }
+    }
+  },
+  "communication": {
+    "kafka": {
+      "bootstrapServers": "localhost:9092",
+      "clientId": "agentic-swarm",
+      "connectionTimeout": 10000,
+      "requestTimeout": 30000
+    },
+    "sharedState": {
+      "enabled": true,
+      "type": "vector-database",
+      "updateFrequency": 5000
+    },
+    "coordination": {
+      "enabled": true,
+      "conflictResolution": "majority-vote"
+    }
+  },
+  "memory": {
+    "vectorDb": {
+      "type": "pinecone",
+      "endpoint": "https://your-pinecone-endpoint",
+      "apiKey": "${PINECONE_API_KEY}",
+      "environment": "production",
+      "namespace": "agentic-swarm",
+      "dimensions": 1536
+    },
+    "knowledgeBase": {
+      "enabled": true,
+      "updateFrequency": 3600000,
+      "persistToFileSystem": true
+    },
+    "codeEmbeddings": {
+      "enabled": true,
+      "modelName": "code-embedding-model",
+      "chunkSize": 1000,
+      "overlapSize": 200
+    }
+  },
+  "security": {
+    "auth": {
+      "enabled": true,
+      "provider": "jwt",
+      "tokenExpiration": 3600
+    },
+    "zeroTrust": {
+      "enabled": true,
+      "leastPrivilege": true,
+      "microsegmentation": true
+    },
+    "secretsManager": {
+      "type": "environment",
+      "rotation": {
+        "enabled": true,
+        "interval": 2592000
+      }
+    }
+  },
+  "models": {
+    "modelOrchestration": {
+      "enabled": true,
+      "performanceTracking": true,
+      "costOptimization": true
+    },
+    "providers": {
+      "openai": {
+        "enabled": true,
+        "apiKey": "${OPENAI_API_KEY}",
+        "organization": "${OPENAI_ORG_ID}",
+        "baseUrl": "https://api.openai.com/v1",
+        "timeout": 60000
+      },
+      "anthropic": {
+        "enabled": true,
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "baseUrl": "https://api.anthropic.com",
+        "timeout": 90000
+      },
+      "grok": {
+        "enabled": true,
+        "apiKey": "${GROK_API_KEY}",
+        "baseUrl": "https://api.grok.ai",
+        "timeout": 60000
+      }
+    }
+  },
+  "pipelines": {
+    "planning": {
+      "timeoutMinutes": 15,
+      "humanReviewRequired": true
+    },
+    "development": {
+      "timeoutMinutes": 180,
+      "parallelization": true
+    },
+    "integration": {
+      "timeoutMinutes": 60,
+      "automaticConflictResolution": true
+    },
+    "deployment": {
+      "timeoutMinutes": 30,
+      "canaryDeployment": true,
+      "automaticRollback": true
+    }
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "destination": "file",
+    "filePath": "./logs/swarm.log",
+    "rotation": {
+      "enabled": true,
+      "maxSize": "100m",
+      "maxFiles": 10
+    }
+  },
+  "metrics": {
+    "collection": {
+      "enabled": true,
+      "interval": 10000
+    },
+    "prometheus": {
+      "enabled": true,
+      "port": 9090
+    },
+    "alerts": {
+      "enabled": true,
+      "channels": [
+        "slack",
+        "email"
+      ]
+    }
+  },
+  "templates": {
+    "basePath": "./templates",
+    "customizationAllowed": true
+  }
+}

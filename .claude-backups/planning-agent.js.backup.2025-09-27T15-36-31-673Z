@@ -1,0 +1,1881 @@
+/**
+ * Planning Agent for the Agentic Software Development Swarm
+ * 
+ * This agent is responsible for generating PRDs, technical specifications,
+ * and architecture decisions.
+ */
+
+const fs = require('fs').promises;
+const path = require('path');
+const BaseAgent = require('../base-agent');
+const logger = require('../../utils/logger');
+
+class PlanningAgent extends BaseAgent {
+  constructor(config = {}) {
+    super({
+      type: 'planning',
+      name: 'Strategic Planning Agent',
+      specializations: [
+        'requirements-analysis',
+        'system-architecture',
+        'technical-specification',
+        'task-decomposition',
+        'project-planning'
+      ],
+      capabilities: [
+        'prd-generation',
+        'architecture-design',
+        'data-modeling',
+        'api-design',
+        'task-breakdown'
+      ],
+      model: config.model || 'claude-opus-4.1', // Default to Claude for planning tasks
+      ...config
+    });
+    
+    this.templatePath = config.templatePath || path.join(__dirname, '../../templates/prd');
+    this.templates = new Map();
+    
+    logger.info('Planning Agent initialized');
+  }
+  
+  /**
+   * Initialize the agent
+   */
+  async initialize() {
+    await super.initialize();
+    
+    try {
+      // Load templates
+      await this.loadTemplates();
+      
+      logger.info(`Planning Agent ${this.config.id} ready with ${this.templates.size} templates`);
+      
+      return true;
+    } catch (error) {
+      logger.error(`Error initializing Planning Agent: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Load planning templates
+   */
+  async loadTemplates() {
+    try {
+      // Check if template directory exists
+      try {
+        await fs.access(this.templatePath);
+      } catch (error) {
+        logger.warn(`Template directory ${this.templatePath} not found, using default templates`);
+        
+        // Use default templates if directory doesn't exist
+        this.templates.set('prd', DEFAULT_PRD_TEMPLATE);
+        this.templates.set('architecture', DEFAULT_ARCHITECTURE_TEMPLATE);
+        this.templates.set('api-spec', DEFAULT_API_SPEC_TEMPLATE);
+        this.templates.set('data-model', DEFAULT_DATA_MODEL_TEMPLATE);
+        this.templates.set('task-breakdown', DEFAULT_TASK_BREAKDOWN_TEMPLATE);
+        
+        return;
+      }
+      
+      // Read all template files
+      const files = await fs.readdir(this.templatePath);
+      
+      for (const file of files) {
+        if (!file.endsWith('.md')) continue;
+        
+        const templateName = path.basename(file, '.md');
+        const filePath = path.join(this.templatePath, file);
+        
+        try {
+          const content = await fs.readFile(filePath, 'utf8');
+          this.templates.set(templateName, content);
+          
+          logger.debug(`Loaded template: ${templateName}`);
+        } catch (error) {
+          logger.error(`Error loading template ${filePath}: ${error.message}`);
+        }
+      }
+      
+      // If no templates were found, use default templates
+      if (this.templates.size === 0) {
+        logger.warn('No templates found, using default templates');
+        
+        this.templates.set('prd', DEFAULT_PRD_TEMPLATE);
+        this.templates.set('architecture', DEFAULT_ARCHITECTURE_TEMPLATE);
+        this.templates.set('api-spec', DEFAULT_API_SPEC_TEMPLATE);
+        this.templates.set('data-model', DEFAULT_DATA_MODEL_TEMPLATE);
+        this.templates.set('task-breakdown', DEFAULT_TASK_BREAKDOWN_TEMPLATE);
+      }
+    } catch (error) {
+      logger.error(`Error loading templates: ${error.message}`);
+      
+      // Use default templates as fallback
+      this.templates.set('prd', DEFAULT_PRD_TEMPLATE);
+      this.templates.set('architecture', DEFAULT_ARCHITECTURE_TEMPLATE);
+      this.templates.set('api-spec', DEFAULT_API_SPEC_TEMPLATE);
+      this.templates.set('data-model', DEFAULT_DATA_MODEL_TEMPLATE);
+      this.templates.set('task-breakdown', DEFAULT_TASK_BREAKDOWN_TEMPLATE);
+    }
+  }
+  
+  /**
+   * Process a task
+   * 
+   * @param {Object} task - Task to process
+   * @returns {Object} Task result
+   */
+  async processTask(task) {
+    logger.info(`Planning Agent processing task: ${task.type || 'unknown'}`);
+    
+    switch (task.type) {
+      case 'generate-prd':
+        return await this.generatePRD(task);
+        
+      case 'create-architecture':
+        return await this.createArchitecture(task);
+        
+      case 'design-api':
+        return await this.designAPI(task);
+        
+      case 'create-data-model':
+        return await this.createDataModel(task);
+        
+      case 'decompose-tasks':
+        return await this.decomposeTasks(task);
+        
+      case 'analyze-requirements':
+        return await this.analyzeRequirements(task);
+        
+      case 'plan-project':
+        return await this.planProject(task);
+        
+      default:
+        throw new Error(`Unsupported task type: ${task.type || 'undefined'}`);
+    }
+  }
+  
+  /**
+   * Generate a Product Requirements Document (PRD)
+   * 
+   * @param {Object} task - PRD generation task
+   * @returns {Object} Generated PRD
+   */
+  async generatePRD(task) {
+    logger.info('Generating PRD');
+    
+    if (!task.requirements) {
+      throw new Error('Task must include requirements field');
+    }
+    
+    const requirements = task.requirements;
+    const projectName = task.projectName || 'New Project';
+    const template = this.templates.get('prd') || DEFAULT_PRD_TEMPLATE;
+    
+    // Prepare the prompt for the model
+    const prompt = this.preparePRDPrompt(requirements, projectName, template, task.context);
+    
+    try {
+      // Generate PRD content
+      const prdContent = await this.generateText(prompt, {
+        temperature: 0.1,
+        max_tokens: 5000,
+        system_prompt: "You are a Product Manager and Software Architect with expertise in creating detailed and effective Product Requirements Documents. Your PRDs are known for their clarity, completeness, and technical accuracy."
+      });
+      
+      // Parse and structure the PRD
+      const prd = this.parsePRDContent(prdContent, projectName);
+      
+      // Store in knowledge base if enabled
+      if (this.config.useKnowledgeBase && this.knowledgeBase) {
+        await this.storeKnowledge('requirements', `prd-${task.id}`, {
+          title: `PRD for ${projectName}`,
+          content: prdContent,
+          type: 'prd',
+          projectName,
+          requirements: task.requirements,
+          tags: ['prd', 'requirements', projectName]
+        });
+      }
+      
+      // Store in shared state if enabled
+      if (this.config.useSharedState && this.sharedState) {
+        await this.storeState(['projects', projectName, 'prd'], prd);
+      }
+      
+      logger.info(`PRD generated for ${projectName}`);
+      
+      return {
+        prd,
+        rawContent: prdContent
+      };
+    } catch (error) {
+      logger.error(`Error generating PRD: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Prepare prompt for PRD generation
+   * 
+   * @param {string|Object} requirements - Project requirements
+   * @param {string} projectName - Project name
+   * @param {string} template - PRD template
+   * @param {Object} context - Additional context
+   * @returns {string} Prepared prompt
+   */
+  preparePRDPrompt(requirements, projectName, template, context = {}) {
+    // If requirements is an object, convert to string
+    const requirementsText = typeof requirements === 'object' ? 
+      JSON.stringify(requirements, null, 2) : requirements;
+    
+    const contextStr = context ? 
+      `\n\nAdditional Context:\n${JSON.stringify(context, null, 2)}` : '';
+    
+    return `
+# Task: Generate a detailed Product Requirements Document (PRD)
+
+## Project Information
+- Project Name: ${projectName}
+
+## Requirements
+${requirementsText}
+${contextStr}
+
+## Instructions
+Please create a comprehensive Product Requirements Document (PRD) based on the provided requirements. 
+Use the following template structure, but adapt it as needed for this specific project.
+
+The PRD should be detailed, clear, and actionable for the development team.
+
+${template}
+
+Keep the document comprehensive but focused. Be specific about features, user stories, and technical requirements.
+Include data models, API specifications, and user flows where relevant.
+`;
+  }
+  
+  /**
+   * Parse PRD content into structured format
+   * 
+   * @param {string} content - PRD content
+   * @param {string} projectName - Project name
+   * @returns {Object} Parsed PRD
+   */
+  parsePRDContent(content, projectName) {
+    // Simple parser for markdown sections
+    const sections = {};
+    let currentSection = 'overview';
+    sections[currentSection] = '';
+    
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      // Check for h1 or h2 headers
+      if (line.startsWith('# ')) {
+        currentSection = line.substring(2).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else if (line.startsWith('## ')) {
+        currentSection = line.substring(3).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else {
+        sections[currentSection] += line + '\n';
+      }
+    }
+    
+    // Extract key information
+    const features = this.extractFeatures(content);
+    const userStories = this.extractUserStories(content);
+    const requirements = this.extractRequirements(content);
+    
+    return {
+      title: projectName,
+      content,
+      sections,
+      features,
+      userStories,
+      requirements,
+      createdAt: new Date().toISOString()
+    };
+  }
+  
+  /**
+   * Extract features from PRD content
+   * 
+   * @param {string} content - PRD content
+   * @returns {Array<Object>} Extracted features
+   */
+  extractFeatures(content) {
+    const features = [];
+    
+    // Look for feature sections
+    const featureSection = content.match(/#+\s*Features([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (featureSection && featureSection[1]) {
+      const featureText = featureSection[1];
+      
+      // Look for list items as features
+      const featureItems = featureText.match(/[-*]\s+(.*)/g);
+      
+      if (featureItems) {
+        for (const item of featureItems) {
+          const feature = item.replace(/^[-*]\s+/, '').trim();
+          
+          if (feature) {
+            // Check for priority indicators
+            let priority = 'medium';
+            
+            if (feature.includes('(high)') || feature.includes('[high]')) {
+              priority = 'high';
+            } else if (feature.includes('(low)') || feature.includes('[low]')) {
+              priority = 'low';
+            }
+            
+            // Clean up feature text
+            const cleanFeature = feature
+              .replace(/\([^)]*\)/g, '')
+              .replace(/\[[^\]]*\]/g, '')
+              .trim();
+            
+            features.push({
+              description: cleanFeature,
+              priority
+            });
+          }
+        }
+      }
+    }
+    
+    return features;
+  }
+  
+  /**
+   * Extract user stories from PRD content
+   * 
+   * @param {string} content - PRD content
+   * @returns {Array<Object>} Extracted user stories
+   */
+  extractUserStories(content) {
+    const userStories = [];
+    
+    // Look for user story sections
+    const userStorySection = content.match(/#+\s*User\s+Stories([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (userStorySection && userStorySection[1]) {
+      const storyText = userStorySection[1];
+      
+      // Look for individual stories
+      const storyItems = storyText.match(/[-*]\s+(As a|As an).*?so that.*?\./gi);
+      
+      if (storyItems) {
+        for (const item of storyItems) {
+          const story = item.replace(/^[-*]\s+/, '').trim();
+          
+          if (story) {
+            // Try to parse user role, action, and benefit
+            const roleMatch = story.match(/As an?\s+([^,\.]+)/i);
+            const actionMatch = story.match(/I want to\s+([^,\.]+)/i);
+            const benefitMatch = story.match(/so that\s+([^,\.]+)/i);
+            
+            userStories.push({
+              story,
+              role: roleMatch ? roleMatch[1].trim() : '',
+              action: actionMatch ? actionMatch[1].trim() : '',
+              benefit: benefitMatch ? benefitMatch[1].trim() : ''
+            });
+          }
+        }
+      }
+    }
+    
+    return userStories;
+  }
+  
+  /**
+   * Extract requirements from PRD content
+   * 
+   * @param {string} content - PRD content
+   * @returns {Object} Extracted requirements
+   */
+  extractRequirements(content) {
+    const requirements = {
+      functional: [],
+      nonFunctional: [],
+      technical: []
+    };
+    
+    // Extract functional requirements
+    const functionalSection = content.match(/#+\s*Functional\s+Requirements([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (functionalSection && functionalSection[1]) {
+      const reqItems = functionalSection[1].match(/[-*]\s+(.*)/g);
+      
+      if (reqItems) {
+        for (const item of reqItems) {
+          const req = item.replace(/^[-*]\s+/, '').trim();
+          if (req) {
+            requirements.functional.push(req);
+          }
+        }
+      }
+    }
+    
+    // Extract non-functional requirements
+    const nonFunctionalSection = content.match(/#+\s*Non-?Functional\s+Requirements([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (nonFunctionalSection && nonFunctionalSection[1]) {
+      const reqItems = nonFunctionalSection[1].match(/[-*]\s+(.*)/g);
+      
+      if (reqItems) {
+        for (const item of reqItems) {
+          const req = item.replace(/^[-*]\s+/, '').trim();
+          if (req) {
+            requirements.nonFunctional.push(req);
+          }
+        }
+      }
+    }
+    
+    // Extract technical requirements
+    const technicalSection = content.match(/#+\s*Technical\s+Requirements([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (technicalSection && technicalSection[1]) {
+      const reqItems = technicalSection[1].match(/[-*]\s+(.*)/g);
+      
+      if (reqItems) {
+        for (const item of reqItems) {
+          const req = item.replace(/^[-*]\s+/, '').trim();
+          if (req) {
+            requirements.technical.push(req);
+          }
+        }
+      }
+    }
+    
+    return requirements;
+  }
+  
+  /**
+   * Create system architecture document
+   * 
+   * @param {Object} task - Architecture design task
+   * @returns {Object} Architecture design
+   */
+  async createArchitecture(task) {
+    logger.info('Creating system architecture');
+    
+    if (!task.prd && !task.requirements) {
+      throw new Error('Task must include prd or requirements field');
+    }
+    
+    const prd = task.prd;
+    const requirements = task.requirements || (prd ? prd.requirements : null);
+    const projectName = task.projectName || (prd ? prd.title : 'New Project');
+    const template = this.templates.get('architecture') || DEFAULT_ARCHITECTURE_TEMPLATE;
+    
+    // Get technology preferences if specified
+    const frontendStack = task.frontendStack || (task.techStack ? task.techStack.frontend : null);
+    const backendStack = task.backendStack || (task.techStack ? task.techStack.backend : null);
+    
+    // Prepare the prompt for the model
+    const prompt = this.prepareArchitecturePrompt(
+      prd, requirements, projectName, 
+      frontendStack, backendStack, template, task.context
+    );
+    
+    try {
+      // Generate architecture content
+      const architectureContent = await this.generateText(prompt, {
+        temperature: 0.2,
+        max_tokens: 6000,
+        system_prompt: "You are an experienced Software Architect with expertise in designing scalable, maintainable systems. You excel at creating clear architecture documents that consider security, performance, scalability, and maintainability."
+      });
+      
+      // Parse and structure the architecture
+      const architecture = this.parseArchitectureContent(architectureContent, projectName);
+      
+      // Store in knowledge base if enabled
+      if (this.config.useKnowledgeBase && this.knowledgeBase) {
+        await this.storeKnowledge('architecture', `architecture-${task.id}`, {
+          title: `Architecture for ${projectName}`,
+          content: architectureContent,
+          type: 'architecture',
+          projectName,
+          tags: ['architecture', 'system-design', projectName]
+        });
+      }
+      
+      // Store in shared state if enabled
+      if (this.config.useSharedState && this.sharedState) {
+        await this.storeState(['projects', projectName, 'architecture'], architecture);
+      }
+      
+      logger.info(`Architecture document created for ${projectName}`);
+      
+      return {
+        architecture,
+        rawContent: architectureContent
+      };
+    } catch (error) {
+      logger.error(`Error creating architecture: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Prepare prompt for architecture design
+   * 
+   * @param {Object} prd - Product Requirements Document
+   * @param {Object} requirements - Requirements if PRD not available
+   * @param {string} projectName - Project name
+   * @param {string|Object} frontendStack - Frontend technology stack
+   * @param {string|Object} backendStack - Backend technology stack
+   * @param {string} template - Architecture template
+   * @param {Object} context - Additional context
+   * @returns {string} Prepared prompt
+   */
+  prepareArchitecturePrompt(prd, requirements, projectName, frontendStack, backendStack, template, context = {}) {
+    // If stacks are objects, convert to strings
+    const frontendStackText = frontendStack ? 
+      (typeof frontendStack === 'object' ? JSON.stringify(frontendStack, null, 2) : frontendStack) :
+      'Please recommend appropriate technologies';
+      
+    const backendStackText = backendStack ? 
+      (typeof backendStack === 'object' ? JSON.stringify(backendStack, null, 2) : backendStack) :
+      'Please recommend appropriate technologies';
+    
+    // Use PRD if available, otherwise use requirements
+    const requirementsText = prd ? 
+      `# Product Requirements Document\n${prd.content || JSON.stringify(prd, null, 2)}` :
+      `# Requirements\n${typeof requirements === 'object' ? JSON.stringify(requirements, null, 2) : requirements}`;
+    
+    const contextStr = context ? 
+      `\n\nAdditional Context:\n${JSON.stringify(context, null, 2)}` : '';
+    
+    return `
+# Task: Design System Architecture
+
+## Project Information
+- Project Name: ${projectName}
+
+## Technology Stack
+- Frontend Stack: ${frontendStackText}
+- Backend Stack: ${backendStackText}
+
+${requirementsText}
+${contextStr}
+
+## Instructions
+Please create a comprehensive system architecture document based on the provided requirements and technology preferences. 
+Follow the template structure below, but adapt it as needed for this specific project.
+
+The architecture should be detailed, scalable, maintainable, and secure. Include diagrams descriptions,
+component breakdowns, data flows, and API specifications.
+
+Always start building with the backend first, as the routes created in the backend should inform the frontend.
+
+${template}
+
+Your architecture should focus on:
+1. Clear component boundaries and responsibilities
+2. Security considerations at all levels
+3. Scalability and performance
+4. Maintainability and testability
+5. Appropriate data modeling
+6. Well-defined API contracts between components
+
+Be specific and detailed in your recommendations. If certain requirements are unclear, make reasonable assumptions and note them.
+`;
+  }
+  
+  /**
+   * Parse architecture content into structured format
+   * 
+   * @param {string} content - Architecture content
+   * @param {string} projectName - Project name
+   * @returns {Object} Parsed architecture
+   */
+  parseArchitectureContent(content, projectName) {
+    // Simple parser for markdown sections
+    const sections = {};
+    let currentSection = 'overview';
+    sections[currentSection] = '';
+    
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      // Check for h1 or h2 headers
+      if (line.startsWith('# ')) {
+        currentSection = line.substring(2).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else if (line.startsWith('## ')) {
+        currentSection = line.substring(3).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else {
+        sections[currentSection] += line + '\n';
+      }
+    }
+    
+    // Extract key information
+    const components = this.extractComponents(content);
+    const dataModel = this.extractDataModel(content);
+    const apis = this.extractAPIs(content);
+    
+    return {
+      title: `System Architecture for ${projectName}`,
+      content,
+      sections,
+      components,
+      dataModel,
+      apis,
+      createdAt: new Date().toISOString()
+    };
+  }
+  
+  /**
+   * Extract components from architecture content
+   * 
+   * @param {string} content - Architecture content
+   * @returns {Array<Object>} Extracted components
+   */
+  extractComponents(content) {
+    const components = [];
+    
+    // Look for components section
+    const componentsSection = content.match(/#+\s*Components?([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (componentsSection && componentsSection[1]) {
+      // Look for component headings (h3)
+      const componentHeadings = componentsSection[1].match(/###\s+(.*)/g);
+      
+      if (componentHeadings) {
+        for (let i = 0; i < componentHeadings.length; i++) {
+          const name = componentHeadings[i].replace(/^###\s+/, '').trim();
+          let description = '';
+          
+          // Get description text until next heading or end
+          const startIdx = componentsSection[1].indexOf(componentHeadings[i]) + componentHeadings[i].length;
+          const endIdx = (i < componentHeadings.length - 1) ? 
+            componentsSection[1].indexOf(componentHeadings[i + 1]) : 
+            componentsSection[1].length;
+          
+          if (startIdx < endIdx) {
+            description = componentsSection[1].substring(startIdx, endIdx).trim();
+          }
+          
+          // Extract type and responsibilities
+          let type = 'unknown';
+          if (description.toLowerCase().includes('frontend')) {
+            type = 'frontend';
+          } else if (description.toLowerCase().includes('backend')) {
+            type = 'backend';
+          } else if (description.toLowerCase().includes('database')) {
+            type = 'database';
+          } else if (description.toLowerCase().includes('infrastructure')) {
+            type = 'infrastructure';
+          }
+          
+          // Extract tech stack
+          const techStackMatch = description.match(/technologies?:([^\n]+)/i);
+          const techStack = techStackMatch ? 
+            techStackMatch[1].trim().split(/,\s*/) : [];
+          
+          components.push({
+            name,
+            type,
+            description,
+            techStack
+          });
+        }
+      }
+    }
+    
+    return components;
+  }
+  
+  /**
+   * Extract data model from architecture content
+   * 
+   * @param {string} content - Architecture content
+   * @returns {Array<Object>} Extracted data model
+   */
+  extractDataModel(content) {
+    const dataModel = [];
+    
+    // Look for data model section
+    const dataModelSection = content.match(/#+\s*Data\s+Model([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (dataModelSection && dataModelSection[1]) {
+      // Look for entity headings (h3)
+      const entityHeadings = dataModelSection[1].match(/###\s+(.*)/g);
+      
+      if (entityHeadings) {
+        for (let i = 0; i < entityHeadings.length; i++) {
+          const name = entityHeadings[i].replace(/^###\s+/, '').trim();
+          let description = '';
+          
+          // Get description text until next heading or end
+          const startIdx = dataModelSection[1].indexOf(entityHeadings[i]) + entityHeadings[i].length;
+          const endIdx = (i < entityHeadings.length - 1) ? 
+            dataModelSection[1].indexOf(entityHeadings[i + 1]) : 
+            dataModelSection[1].length;
+          
+          if (startIdx < endIdx) {
+            description = dataModelSection[1].substring(startIdx, endIdx).trim();
+          }
+          
+          // Extract fields
+          const fields = [];
+          const fieldMatches = description.match(/[-*]\s+`[^`]+`[^,\n]*/g);
+          
+          if (fieldMatches) {
+            for (const fieldMatch of fieldMatches) {
+              const nameMatch = fieldMatch.match(/`([^`]+)`/);
+              
+              if (nameMatch) {
+                const fieldName = nameMatch[1];
+                
+                // Get field type
+                let fieldType = 'string';
+                if (fieldMatch.includes('integer') || fieldMatch.includes('int')) {
+                  fieldType = 'integer';
+                } else if (fieldMatch.includes('float') || fieldMatch.includes('double') || fieldMatch.includes('decimal')) {
+                  fieldType = 'float';
+                } else if (fieldMatch.includes('boolean') || fieldMatch.includes('bool')) {
+                  fieldType = 'boolean';
+                } else if (fieldMatch.includes('date')) {
+                  fieldType = 'date';
+                } else if (fieldMatch.includes('object') || fieldMatch.includes('json')) {
+                  fieldType = 'object';
+                } else if (fieldMatch.includes('array')) {
+                  fieldType = 'array';
+                }
+                
+                // Check if required
+                const required = fieldMatch.toLowerCase().includes('required');
+                
+                // Get description
+                const descMatch = fieldMatch.match(/-(.*?)(?:\(|$)/);
+                const fieldDescription = descMatch ? 
+                  descMatch[1].replace(/`[^`]+`/, '').trim() : '';
+                
+                fields.push({
+                  name: fieldName,
+                  type: fieldType,
+                  required,
+                  description: fieldDescription
+                });
+              }
+            }
+          }
+          
+          dataModel.push({
+            name,
+            fields,
+            description
+          });
+        }
+      }
+    }
+    
+    return dataModel;
+  }
+  
+  /**
+   * Extract APIs from architecture content
+   * 
+   * @param {string} content - Architecture content
+   * @returns {Array<Object>} Extracted APIs
+   */
+  extractAPIs(content) {
+    const apis = [];
+    
+    // Look for API section
+    const apiSection = content.match(/#+\s*API\s+Specifications?([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (apiSection && apiSection[1]) {
+      // Look for API endpoint patterns (common formats in markdown)
+      const endpointPatterns = [
+        // Pattern: ### GET /api/resource
+        /###\s+(GET|POST|PUT|DELETE|PATCH)\s+(\S+)(?:[^#]+)/gi,
+        
+        // Pattern: - GET /api/resource
+        /[-*]\s+(GET|POST|PUT|DELETE|PATCH)\s+(\S+)(?:[^\n-*#]+)/gi
+      ];
+      
+      for (const pattern of endpointPatterns) {
+        let match;
+        while ((match = pattern.exec(apiSection[1])) !== null) {
+          const method = match[1].toUpperCase();
+          const path = match[2];
+          let description = match[0].substring(match[0].indexOf(path) + path.length).trim();
+          
+          // Extract request and response details
+          const requestMatch = description.match(/Request[:]?\s([\s\S]*?)(?:Response|$)/i);
+          const responseMatch = description.match(/Response[:]?\s([\s\S]*?)$/i);
+          
+          const requestBody = requestMatch ? requestMatch[1].trim() : '';
+          const responseBody = responseMatch ? responseMatch[1].trim() : '';
+          
+          // Clean up description
+          description = description.replace(/Request[:]?\s[\s\S]*?(?:Response|$)/i, '');
+          description = description.replace(/Response[:]?\s[\s\S]*?$/i, '');
+          description = description.trim();
+          
+          apis.push({
+            method,
+            path,
+            description,
+            requestBody,
+            responseBody
+          });
+        }
+      }
+    }
+    
+    return apis;
+  }
+  
+  /**
+   * Design API specifications
+   * 
+   * @param {Object} task - API design task
+   * @returns {Object} API specifications
+   */
+  async designAPI(task) {
+    logger.info('Designing API specifications');
+    
+    if (!task.requirements && !task.prd && !task.architecture) {
+      throw new Error('Task must include requirements, prd, or architecture field');
+    }
+    
+    const prd = task.prd;
+    const architecture = task.architecture;
+    const requirements = task.requirements || 
+      (prd ? prd.requirements : null) || 
+      (architecture ? { apis: architecture.apis } : null);
+      
+    const projectName = task.projectName || 
+      (prd ? prd.title : null) || 
+      (architecture ? architecture.title.replace('System Architecture for ', '') : 'New Project');
+      
+    const template = this.templates.get('api-spec') || DEFAULT_API_SPEC_TEMPLATE;
+    
+    // Get API style preference
+    const apiStyle = task.apiStyle || 'REST';
+    
+    // Prepare the prompt for the model
+    const prompt = this.prepareAPIPrompt(
+      requirements, projectName, apiStyle, template, task.context
+    );
+    
+    try {
+      // Generate API specifications
+      const apiSpecContent = await this.generateText(prompt, {
+        temperature: 0.2,
+        max_tokens: 6000,
+        system_prompt: "You are an API Design Expert with extensive experience designing scalable, maintainable, and well-documented APIs. You create clear, consistent, and comprehensive API specifications that follow best practices."
+      });
+      
+      // Parse and structure the API specifications
+      const apiSpec = this.parseAPIContent(apiSpecContent, projectName, apiStyle);
+      
+      // Store in knowledge base if enabled
+      if (this.config.useKnowledgeBase && this.knowledgeBase) {
+        await this.storeKnowledge('api-specs', `api-spec-${task.id}`, {
+          title: `API Specifications for ${projectName}`,
+          content: apiSpecContent,
+          type: 'api-spec',
+          apiStyle,
+          projectName,
+          tags: ['api', 'specifications', apiStyle.toLowerCase(), projectName]
+        });
+      }
+      
+      // Store in shared state if enabled
+      if (this.config.useSharedState && this.sharedState) {
+        await this.storeState(['projects', projectName, 'api-spec'], apiSpec);
+      }
+      
+      logger.info(`API specifications designed for ${projectName} (${apiStyle})`);
+      
+      return {
+        apiSpec,
+        rawContent: apiSpecContent
+      };
+    } catch (error) {
+      logger.error(`Error designing API: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Prepare prompt for API design
+   * 
+   * @param {Object} requirements - Project requirements
+   * @param {string} projectName - Project name
+   * @param {string} apiStyle - API style (REST, GraphQL, etc.)
+   * @param {string} template - API template
+   * @param {Object} context - Additional context
+   * @returns {string} Prepared prompt
+   */
+  prepareAPIPrompt(requirements, projectName, apiStyle, template, context = {}) {
+    const requirementsText = typeof requirements === 'object' ? 
+      JSON.stringify(requirements, null, 2) : requirements;
+    
+    const contextStr = context ? 
+      `\n\nAdditional Context:\n${JSON.stringify(context, null, 2)}` : '';
+    
+    return `
+# Task: Design API Specifications
+
+## Project Information
+- Project Name: ${projectName}
+- API Style: ${apiStyle}
+
+## Requirements
+${requirementsText}
+${contextStr}
+
+## Instructions
+Please create comprehensive API specifications based on the provided requirements. 
+Follow the template structure below, but adapt it as needed for this specific project.
+
+The API should be well-structured, consistent, secure, and follow ${apiStyle} best practices.
+Include detailed endpoint specifications, request/response formats, error handling, and authentication/authorization.
+
+${template}
+
+Your API design should focus on:
+1. Consistency across endpoints
+2. Clear naming conventions
+3. Proper use of HTTP methods and status codes (for REST) or query/mutation structure (for GraphQL)
+4. Comprehensive documentation
+5. Security considerations
+6. Versioning strategy
+7. Error handling standards
+
+Be specific and detailed in your specifications. If certain requirements are unclear, make reasonable assumptions and note them.
+`;
+  }
+  
+  /**
+   * Parse API content into structured format
+   * 
+   * @param {string} content - API content
+   * @param {string} projectName - Project name
+   * @param {string} apiStyle - API style
+   * @returns {Object} Parsed API spec
+   */
+  parseAPIContent(content, projectName, apiStyle) {
+    // Simple parser for markdown sections
+    const sections = {};
+    let currentSection = 'overview';
+    sections[currentSection] = '';
+    
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      // Check for h1 or h2 headers
+      if (line.startsWith('# ')) {
+        currentSection = line.substring(2).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else if (line.startsWith('## ')) {
+        currentSection = line.substring(3).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else {
+        sections[currentSection] += line + '\n';
+      }
+    }
+    
+    // Extract endpoints or operations based on API style
+    let endpoints = [];
+    
+    if (apiStyle.toUpperCase() === 'REST') {
+      endpoints = this.extractRESTEndpoints(content);
+    } else if (apiStyle.toUpperCase() === 'GRAPHQL') {
+      endpoints = this.extractGraphQLOperations(content);
+    } else {
+      // Generic endpoint extraction
+      endpoints = this.extractGenericEndpoints(content);
+    }
+    
+    return {
+      title: `API Specifications for ${projectName}`,
+      apiStyle,
+      content,
+      sections,
+      endpoints,
+      createdAt: new Date().toISOString()
+    };
+  }
+  
+  /**
+   * Extract REST endpoints from API content
+   * 
+   * @param {string} content - API content
+   * @returns {Array<Object>} Extracted endpoints
+   */
+  extractRESTEndpoints(content) {
+    const endpoints = [];
+    
+    // Look for endpoint patterns
+    const endpointPatterns = [
+      // Pattern: ### GET /api/resource
+      /###\s+(GET|POST|PUT|DELETE|PATCH)\s+(\S+)(?:[^#]+)/gi,
+      
+      // Pattern: - GET /api/resource
+      /[-*]\s+(GET|POST|PUT|DELETE|PATCH)\s+(\S+)(?:[^\n-*#]+)/gi
+    ];
+    
+    for (const pattern of endpointPatterns) {
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        const method = match[1].toUpperCase();
+        const path = match[2];
+        let description = match[0].substring(match[0].indexOf(path) + path.length).trim();
+        
+        // Extract request and response details
+        const requestMatch = description.match(/Request[:]?\s([\s\S]*?)(?:Response|$)/i);
+        const responseMatch = description.match(/Response[:]?\s([\s\S]*?)$/i);
+        
+        // Extract parameters
+        const paramsMatch = description.match(/Parameters[:]?\s([\s\S]*?)(?:Request|Response|$)/i);
+        
+        // Extract status codes
+        const statusCodesMatch = description.match(/Status Codes[:]?\s([\s\S]*?)$/i);
+        
+        const requestBody = requestMatch ? requestMatch[1].trim() : '';
+        const responseBody = responseMatch ? responseMatch[1].trim() : '';
+        const parameters = paramsMatch ? paramsMatch[1].trim() : '';
+        const statusCodes = statusCodesMatch ? statusCodesMatch[1].trim() : '';
+        
+        // Clean up description
+        description = description
+          .replace(/Parameters[:]?\s[\s\S]*?(?:Request|Response|$)/i, '')
+          .replace(/Request[:]?\s[\s\S]*?(?:Response|$)/i, '')
+          .replace(/Response[:]?\s[\s\S]*?(?:Status Codes|$)/i, '')
+          .replace(/Status Codes[:]?\s[\s\S]*?$/i, '')
+          .trim();
+        
+        endpoints.push({
+          method,
+          path,
+          description,
+          parameters,
+          requestBody,
+          responseBody,
+          statusCodes
+        });
+      }
+    }
+    
+    return endpoints;
+  }
+  
+  /**
+   * Extract GraphQL operations from API content
+   * 
+   * @param {string} content - API content
+   * @returns {Array<Object>} Extracted operations
+   */
+  extractGraphQLOperations(content) {
+    const operations = [];
+    
+    // Look for GraphQL operation patterns
+    const operationPatterns = [
+      // Pattern: ### Query: queryName
+      /###\s+(Query|Mutation):\s+(\w+)(?:[^#]+)/gi,
+      
+      // Pattern: - Query: queryName
+      /[-*]\s+(Query|Mutation):\s+(\w+)(?:[^\n-*#]+)/gi
+    ];
+    
+    for (const pattern of operationPatterns) {
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        const type = match[1].toLowerCase();
+        const name = match[2];
+        let description = match[0].substring(match[0].indexOf(name) + name.length).trim();
+        
+        // Extract request and response details
+        const inputMatch = description.match(/Input[:]?\s([\s\S]*?)(?:Response|$)/i);
+        const responseMatch = description.match(/Response[:]?\s([\s\S]*?)$/i);
+        
+        const inputSchema = inputMatch ? inputMatch[1].trim() : '';
+        const responseSchema = responseMatch ? responseMatch[1].trim() : '';
+        
+        // Clean up description
+        description = description
+          .replace(/Input[:]?\s[\s\S]*?(?:Response|$)/i, '')
+          .replace(/Response[:]?\s[\s\S]*?$/i, '')
+          .trim();
+        
+        operations.push({
+          type,
+          name,
+          description,
+          inputSchema,
+          responseSchema
+        });
+      }
+    }
+    
+    return operations;
+  }
+  
+  /**
+   * Extract generic endpoints from API content
+   * 
+   * @param {string} content - API content
+   * @returns {Array<Object>} Extracted endpoints
+   */
+  extractGenericEndpoints(content) {
+    const endpoints = [];
+    
+    // Look for section that might contain endpoints
+    const endpointsSection = content.match(/#+\s*Endpoints?([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (endpointsSection && endpointsSection[1]) {
+      // Look for endpoint headings (h3)
+      const endpointHeadings = endpointsSection[1].match(/###\s+(.*)/g);
+      
+      if (endpointHeadings) {
+        for (let i = 0; i < endpointHeadings.length; i++) {
+          const name = endpointHeadings[i].replace(/^###\s+/, '').trim();
+          let description = '';
+          
+          // Get description text until next heading or end
+          const startIdx = endpointsSection[1].indexOf(endpointHeadings[i]) + endpointHeadings[i].length;
+          const endIdx = (i < endpointHeadings.length - 1) ? 
+            endpointsSection[1].indexOf(endpointHeadings[i + 1]) : 
+            endpointsSection[1].length;
+          
+          if (startIdx < endIdx) {
+            description = endpointsSection[1].substring(startIdx, endIdx).trim();
+          }
+          
+          endpoints.push({
+            name,
+            description
+          });
+        }
+      } else {
+        // Look for list items that might be endpoints
+        const endpointItems = endpointsSection[1].match(/[-*]\s+(.*)/g);
+        
+        if (endpointItems) {
+          for (const item of endpointItems) {
+            const endpoint = item.replace(/^[-*]\s+/, '').trim();
+            
+            if (endpoint) {
+              endpoints.push({
+                name: endpoint,
+                description: ''
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    return endpoints;
+  }
+  
+  /**
+   * Create a data model
+   * 
+   * @param {Object} task - Data model task
+   * @returns {Object} Data model
+   */
+  async createDataModel(task) {
+    logger.info('Creating data model');
+    
+    if (!task.requirements && !task.prd && !task.architecture) {
+      throw new Error('Task must include requirements, prd, or architecture field');
+    }
+    
+    const prd = task.prd;
+    const architecture = task.architecture;
+    const requirements = task.requirements || 
+      (prd ? prd.requirements : null) || 
+      (architecture ? { dataModel: architecture.dataModel } : null);
+      
+    const projectName = task.projectName || 
+      (prd ? prd.title : null) || 
+      (architecture ? architecture.title.replace('System Architecture for ', '') : 'New Project');
+      
+    const template = this.templates.get('data-model') || DEFAULT_DATA_MODEL_TEMPLATE;
+    
+    // Get database type preference
+    const databaseType = task.databaseType || 'MongoDB';
+    
+    // Prepare the prompt for the model
+    const prompt = this.prepareDataModelPrompt(
+      requirements, projectName, databaseType, template, task.context
+    );
+    
+    try {
+      // Generate data model
+      const dataModelContent = await this.generateText(prompt, {
+        temperature: 0.2,
+        max_tokens: 5000,
+        system_prompt: "You are a Database Architect and Data Modeling Expert with extensive experience designing efficient, normalized, and scalable database schemas. You create clear, comprehensive data models that follow best practices."
+      });
+      
+      // Parse and structure the data model
+      const dataModel = this.parseDataModelContent(dataModelContent, projectName, databaseType);
+      
+      // Store in knowledge base if enabled
+      if (this.config.useKnowledgeBase && this.knowledgeBase) {
+        await this.storeKnowledge('data-models', `data-model-${task.id}`, {
+          title: `Data Model for ${projectName}`,
+          content: dataModelContent,
+          type: 'data-model',
+          databaseType,
+          projectName,
+          tags: ['data-model', 'schema', databaseType.toLowerCase(), projectName]
+        });
+      }
+      
+      // Store in shared state if enabled
+      if (this.config.useSharedState && this.sharedState) {
+        await this.storeState(['projects', projectName, 'data-model'], dataModel);
+      }
+      
+      logger.info(`Data model created for ${projectName} (${databaseType})`);
+      
+      return {
+        dataModel,
+        rawContent: dataModelContent
+      };
+    } catch (error) {
+      logger.error(`Error creating data model: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Prepare prompt for data model
+   * 
+   * @param {Object} requirements - Project requirements
+   * @param {string} projectName - Project name
+   * @param {string} databaseType - Database type
+   * @param {string} template - Data model template
+   * @param {Object} context - Additional context
+   * @returns {string} Prepared prompt
+   */
+  prepareDataModelPrompt(requirements, projectName, databaseType, template, context = {}) {
+    const requirementsText = typeof requirements === 'object' ? 
+      JSON.stringify(requirements, null, 2) : requirements;
+    
+    const contextStr = context ? 
+      `\n\nAdditional Context:\n${JSON.stringify(context, null, 2)}` : '';
+    
+    return `
+# Task: Create Data Model
+
+## Project Information
+- Project Name: ${projectName}
+- Database Type: ${databaseType}
+
+## Requirements
+${requirementsText}
+${contextStr}
+
+## Instructions
+Please create a comprehensive data model based on the provided requirements. 
+Follow the template structure below, but adapt it as needed for this specific project and database type.
+
+The data model should be well-structured, normalized, and optimized for the specified database type.
+Include entity definitions, field details, relationships, indexes, and constraints.
+
+${template}
+
+Your data model should focus on:
+1. Proper normalization (for relational databases) or denormalization (for NoSQL databases)
+2. Clear entity relationships
+3. Appropriate data types and constraints
+4. Optimized indexes
+5. Scalability considerations
+6. Integrity rules
+
+Be specific and detailed in your model. If certain requirements are unclear, make reasonable assumptions and note them.
+`;
+  }
+  
+  /**
+   * Parse data model content into structured format
+   * 
+   * @param {string} content - Data model content
+   * @param {string} projectName - Project name
+   * @param {string} databaseType - Database type
+   * @returns {Object} Parsed data model
+   */
+  parseDataModelContent(content, projectName, databaseType) {
+    // Simple parser for markdown sections
+    const sections = {};
+    let currentSection = 'overview';
+    sections[currentSection] = '';
+    
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      // Check for h1 or h2 headers
+      if (line.startsWith('# ')) {
+        currentSection = line.substring(2).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else if (line.startsWith('## ')) {
+        currentSection = line.substring(3).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else {
+        sections[currentSection] += line + '\n';
+      }
+    }
+    
+    // Extract entities
+    const entities = this.extractEntities(content);
+    
+    // Extract relationships
+    const relationships = this.extractRelationships(content);
+    
+    return {
+      title: `Data Model for ${projectName}`,
+      databaseType,
+      content,
+      sections,
+      entities,
+      relationships,
+      createdAt: new Date().toISOString()
+    };
+  }
+  
+  /**
+   * Extract entities from data model content
+   * 
+   * @param {string} content - Data model content
+   * @returns {Array<Object>} Extracted entities
+   */
+  extractEntities(content) {
+    const entities = [];
+    
+    // Look for entities section
+    const entitiesSection = content.match(/#+\s*Entities?([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (entitiesSection && entitiesSection[1]) {
+      // Look for entity headings (h3)
+      const entityHeadings = entitiesSection[1].match(/###\s+(.*)/g);
+      
+      if (entityHeadings) {
+        for (let i = 0; i < entityHeadings.length; i++) {
+          const name = entityHeadings[i].replace(/^###\s+/, '').trim();
+          let description = '';
+          
+          // Get description text until next heading or end
+          const startIdx = entitiesSection[1].indexOf(entityHeadings[i]) + entityHeadings[i].length;
+          const endIdx = (i < entityHeadings.length - 1) ? 
+            entitiesSection[1].indexOf(entityHeadings[i + 1]) : 
+            entitiesSection[1].length;
+          
+          if (startIdx < endIdx) {
+            description = entitiesSection[1].substring(startIdx, endIdx).trim();
+          }
+          
+          // Extract fields
+          const fields = [];
+          const fieldMatches = description.match(/[-*]\s+`[^`]+`[^,\n]*/g);
+          
+          if (fieldMatches) {
+            for (const fieldMatch of fieldMatches) {
+              const nameMatch = fieldMatch.match(/`([^`]+)`/);
+              
+              if (nameMatch) {
+                const fieldName = nameMatch[1];
+                
+                // Get field type
+                let fieldType = 'string';
+                if (fieldMatch.includes('integer') || fieldMatch.includes('int')) {
+                  fieldType = 'integer';
+                } else if (fieldMatch.includes('float') || fieldMatch.includes('double') || fieldMatch.includes('decimal')) {
+                  fieldType = 'float';
+                } else if (fieldMatch.includes('boolean') || fieldMatch.includes('bool')) {
+                  fieldType = 'boolean';
+                } else if (fieldMatch.includes('date')) {
+                  fieldType = 'date';
+                } else if (fieldMatch.includes('object') || fieldMatch.includes('json')) {
+                  fieldType = 'object';
+                } else if (fieldMatch.includes('array')) {
+                  fieldType = 'array';
+                }
+                
+                // Check if required
+                const required = fieldMatch.toLowerCase().includes('required');
+                
+                // Check if unique
+                const unique = fieldMatch.toLowerCase().includes('unique');
+                
+                // Check if primary key
+                const primaryKey = fieldMatch.toLowerCase().includes('primary key') || 
+                  fieldMatch.toLowerCase().includes('primary_key') || 
+                  fieldName.toLowerCase() === 'id' || 
+                  fieldName.toLowerCase() === '_id';
+                
+                // Get description
+                const descMatch = fieldMatch.match(/-(.*?)(?:\(|$)/);
+                const fieldDescription = descMatch ? 
+                  descMatch[1].replace(/`[^`]+`/, '').trim() : '';
+                
+                fields.push({
+                  name: fieldName,
+                  type: fieldType,
+                  required,
+                  unique,
+                  primaryKey,
+                  description: fieldDescription
+                });
+              }
+            }
+          }
+          
+          // Extract indexes
+          const indexes = [];
+          const indexesMatch = description.match(/indexes?:([\s\S]*?)(?:$|(?:###|##))/i);
+          
+          if (indexesMatch && indexesMatch[1]) {
+            const indexItems = indexesMatch[1].match(/[-*]\s+(.*)/g);
+            
+            if (indexItems) {
+              for (const item of indexItems) {
+                const indexDesc = item.replace(/^[-*]\s+/, '').trim();
+                
+                if (indexDesc) {
+                  // Extract index fields
+                  const fieldsMatch = indexDesc.match(/\(([^)]+)\)/);
+                  
+                  if (fieldsMatch) {
+                    indexes.push({
+                      fields: fieldsMatch[1].split(',').map(f => f.trim()),
+                      description: indexDesc
+                    });
+                  } else {
+                    indexes.push({
+                      description: indexDesc
+                    });
+                  }
+                }
+              }
+            }
+          }
+          
+          entities.push({
+            name,
+            fields,
+            indexes,
+            description
+          });
+        }
+      }
+    }
+    
+    return entities;
+  }
+  
+  /**
+   * Extract relationships from data model content
+   * 
+   * @param {string} content - Data model content
+   * @returns {Array<Object>} Extracted relationships
+   */
+  extractRelationships(content) {
+    const relationships = [];
+    
+    // Look for relationships section
+    const relationshipsSection = content.match(/#+\s*Relationships?([\s\S]*?)(?=#+\s|$)/i);
+    
+    if (relationshipsSection && relationshipsSection[1]) {
+      // Look for relationship list items
+      const relationshipItems = relationshipsSection[1].match(/[-*]\s+(.*)/g);
+      
+      if (relationshipItems) {
+        for (const item of relationshipItems) {
+          const description = item.replace(/^[-*]\s+/, '').trim();
+          
+          if (description) {
+            // Try to extract entities and type
+            let fromEntity = '';
+            let toEntity = '';
+            let type = 'unknown';
+            
+            // Patterns to match:
+            // Entity1 to Entity2: one-to-many
+            // Entity1 has many Entity2
+            // Entity1 belongs to Entity2
+            
+            const pattern1 = /([a-zA-Z0-9_]+)\s+to\s+([a-zA-Z0-9_]+):\s+([a-zA-Z0-9_\-]+)/i;
+            const pattern2 = /([a-zA-Z0-9_]+)\s+has\s+(one|many|one or many)\s+([a-zA-Z0-9_]+)/i;
+            const pattern3 = /([a-zA-Z0-9_]+)\s+belongs\s+to\s+([a-zA-Z0-9_]+)/i;
+            
+            let match;
+            
+            if ((match = description.match(pattern1))) {
+              fromEntity = match[1];
+              toEntity = match[2];
+              type = match[3].toLowerCase();
+            } else if ((match = description.match(pattern2))) {
+              fromEntity = match[1];
+              toEntity = match[3];
+              
+              if (match[2].toLowerCase() === 'one') {
+                type = 'one-to-one';
+              } else if (match[2].toLowerCase() === 'many') {
+                type = 'one-to-many';
+              } else {
+                type = 'one-to-many';
+              }
+            } else if ((match = description.match(pattern3))) {
+              fromEntity = match[1];
+              toEntity = match[2];
+              type = 'many-to-one';
+            }
+            
+            relationships.push({
+              fromEntity,
+              toEntity,
+              type,
+              description
+            });
+          }
+        }
+      }
+    }
+    
+    return relationships;
+  }
+  
+  /**
+   * Decompose a project into tasks
+   * 
+   * @param {Object} task - Task decomposition task
+   * @returns {Object} Decomposed tasks
+   */
+  async decomposeTasks(task) {
+    logger.info('Decomposing project into tasks');
+    
+    if (!task.architecture && !task.prd && !task.requirements) {
+      throw new Error('Task must include architecture, prd, or requirements field');
+    }
+    
+    const architecture = task.architecture;
+    const prd = task.prd;
+    const requirements = task.requirements || 
+      (prd ? prd.requirements : null) || 
+      (architecture ? { components: architecture.components } : null);
+      
+    const projectName = task.projectName || 
+      (prd ? prd.title : null) || 
+      (architecture ? architecture.title.replace('System Architecture for ', '') : 'New Project');
+      
+    const template = this.templates.get('task-breakdown') || DEFAULT_TASK_BREAKDOWN_TEMPLATE;
+    
+    // Prepare the prompt for the model
+    const prompt = this.prepareTaskDecompositionPrompt(
+      architecture, prd, requirements, projectName, template, task.context
+    );
+    
+    try {
+      // Generate task breakdown
+      const taskBreakdownContent = await this.generateText(prompt, {
+        temperature: 0.2,
+        max_tokens: 6000,
+        system_prompt: "You are a Technical Project Manager with expertise in breaking down complex software projects into clear, actionable tasks. You excel at identifying dependencies, estimating effort, and organizing work for efficient execution."
+      });
+      
+      // Parse and structure the task breakdown
+      const taskBreakdown = this.parseTaskBreakdown(taskBreakdownContent, projectName);
+      
+      // Store in knowledge base if enabled
+      if (this.config.useKnowledgeBase && this.knowledgeBase) {
+        await this.storeKnowledge('project-planning', `task-breakdown-${task.id}`, {
+          title: `Task Breakdown for ${projectName}`,
+          content: taskBreakdownContent,
+          type: 'task-breakdown',
+          projectName,
+          tags: ['tasks', 'project-planning', projectName]
+        });
+      }
+      
+      // Store in shared state if enabled
+      if (this.config.useSharedState && this.sharedState) {
+        await this.storeState(['projects', projectName, 'task-breakdown'], taskBreakdown);
+      }
+      
+      logger.info(`Task breakdown created for ${projectName} with ${taskBreakdown.tasks.length} tasks`);
+      
+      return {
+        taskBreakdown,
+        rawContent: taskBreakdownContent
+      };
+    } catch (error) {
+      logger.error(`Error decomposing tasks: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  /**
+   * Prepare prompt for task decomposition
+   * 
+   * @param {Object} architecture - System architecture
+   * @param {Object} prd - Product Requirements Document
+   * @param {Object} requirements - Project requirements
+   * @param {string} projectName - Project name
+   * @param {string} template - Task breakdown template
+   * @param {Object} context - Additional context
+   * @returns {string} Prepared prompt
+   */
+  prepareTaskDecompositionPrompt(architecture, prd, requirements, projectName, template, context = {}) {
+    let inputContent = '';
+    
+    // Include architecture if available
+    if (architecture) {
+      inputContent += `# System Architecture\n${architecture.content || JSON.stringify(architecture, null, 2)}\n\n`;
+    }
+    
+    // Include PRD if available
+    if (prd) {
+      inputContent += `# Product Requirements Document\n${prd.content || JSON.stringify(prd, null, 2)}\n\n`;
+    }
+    
+    // Include requirements if available and not already included
+    if (requirements && !prd && !architecture) {
+      inputContent += `# Requirements\n${typeof requirements === 'object' ? JSON.stringify(requirements, null, 2) : requirements}\n\n`;
+    }
+    
+    const contextStr = context ? 
+      `\n\nAdditional Context:\n${JSON.stringify(context, null, 2)}` : '';
+    
+    return `
+# Task: Decompose Project into Tasks
+
+## Project Information
+- Project Name: ${projectName}
+
+${inputContent}
+${contextStr}
+
+## Instructions
+Please break down the project into clear, actionable tasks based on the provided information. 
+Follow the template structure below, but adapt it as needed for this specific project.
+
+Always start building with the backend first, as the routes created in the backend should inform the frontend.
+
+The task breakdown should be comprehensive, properly sequenced, and include dependencies.
+For each task, include a clear title, description, estimated effort, assigned role, and dependencies.
+
+${template}
+
+Your task breakdown should focus on:
+1. Completeness - covering all aspects of the project
+2. Clarity - each task should be clearly defined with a specific outcome
+3. Proper sequencing - tasks should be in a logical order
+4. Dependencies - clearly identifying what tasks depend on others
+5. Appropriate level of granularity - not too broad, not too detailed
+
+Be specific and detailed in your task breakdown. If certain requirements are unclear, make reasonable assumptions and note them.
+`;
+  }
+  
+  /**
+   * Parse task breakdown content
+   * 
+   * @param {string} content - Task breakdown content
+   * @param {string} projectName - Project name
+   * @returns {Object} Parsed task breakdown
+   */
+  parseTaskBreakdown(content, projectName) {
+    // Simple parser for markdown sections
+    const sections = {};
+    let currentSection = 'overview';
+    sections[currentSection] = '';
+    
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      // Check for h1 or h2 headers
+      if (line.startsWith('# ')) {
+        currentSection = line.substring(2).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else if (line.startsWith('## ')) {
+        currentSection = line.substring(3).toLowerCase().replace(/[^\w]+/g, '_');
+        sections[currentSection] = line + '\n';
+      } else {
+        sections[currentSection] += line + '\n';
+      }
+    }
+    
+    // Extract tasks
+    const tasks = [];
+    
+    // Look for task sections
+    const taskPattern = /#+\s*Task\s+(\d+):\s+([^\n]+)([\s\S]*?)(?=#+\s*Task|$)/gi;
+    
+    let match;
+    while ((match = taskPattern.exec(content)) !== null) {
+      const taskNumber = parseInt(match[1], 10);
+      const title = match[2].trim();
+      const details = match[3].trim();
+      
+      // Extract task details
+      const descriptionMatch = details.match(/Description:([\s\S]*?)(?:Role:|Effort:|Dependencies:|$)/i);
+      const roleMatch = details.match(/Role:([\s\S]*?)(?:Effort:|Dependencies:|$)/i);
+      const effortMatch = details.match(/Effort:([\s\S]*?)(?:Dependencies:|$)/i);
+      const dependenciesMatch = details.match(/Dependencies:([\s\S]*?)$/i);
+      
+      const description = descriptionMatch ? descriptionMatch[1].trim() : '';
+      const role = roleMatch ? roleMatch[1].trim() : '';
+      const effort = effortMatch ? effortMatch[1].trim() : '';
+      
+      // Parse dependencies
+      const dependencies = [];
+      
+      if (dependenciesMatch) {
+        const depText = dependenciesMatch[1];
+        const depItems = depText.match(/[-*]\s+(.*)/g);
+        
+        if (depItems) {
+          for (const depItem of depItems) {
+            const dep = depItem.replace(/^[-*]\s+/, '').trim();
+            
+            if (dep) {
+              // Try to extract task number if present
+              const depNumMatch = dep.match(/task\s*(?:#|:)?\s*(\d+)/i);
+              
+              if (depNumMatch) {
+                dependencies.push(parseInt(depNumMatch[1], 10));
+              } else {
+                dependencies.push(dep);
+              }
+            }
+          }
+        } else {
+          // If no list items, try to parse comma-separated or simple text
+          const deps = depText.split(/[,;]/).map(d => d.trim());
+          
+          for (const dep of deps) {
+            if (dep) {
+              // Try to extract task number if present
+              const depNumMatch = dep.match(/task\s*(?:#|:)?\s*(\d+)/i);
+              
+              if (depNumMatch) {
+                dependencies.push(parseInt(depNumMatch[1], 10));
+              } else if (dep.toLowerCase() !== 'none' && dep.toLowerCase() !== 'n/a') {
+                dependencies.push(dep);
+              }
+            }
+          }
+        }
+      }
+      
+      tasks.push({
+        id: taskNumber,
+        title,
+        description,
+        role,
+        effort,
+        dependencies
+      });
+    }
+    
+    // Sort tasks by ID
+    tasks.sort((a, b) => a.id - b.id);
+    
+    // Extract phases or categories if present
+    const phases = [];
+    
+    // Look for phase sections
+    const phaseSection = content.match(/#+\s*Phases([\s\S]*?)(?=#+\s*Task|$)/i);
+    
+    if (phaseSection && phaseSection[1]) {
+      const phaseItems = phaseSection[1].match(/[-*]\s+(.*)/g);
+      
+      if (phaseItems) {
+        for (const phaseItem of phaseItems) {
+          const phase = phaseItem.replace(/^[-*]\s+/, '').trim();
+          
+          if (phase) {
+            // Try to extract tasks in this phase if specified
+            const tasksMatch = phase.match(/tasks\s*(?:#|:)?\s*([\d,\s\-]+)/i);
+            
+            const phaseObj = {
+              name: phase.replace(/\s*\(tasks\s*(?:#|:)?\s*[\d,\s\-]+\)/i, '').trim(),
+              tasks: []
+            };
+            
+            if (tasksMatch) {
+              const taskRanges = tasksMatch[1].split(',');
+              
+              for (const range of taskRanges) {
+                const rangeMatch = range.trim().match(/(\d+)\s*-\s*(\d+)/);
+                
+                if (rangeMatch) {
+                  // Task range (e.g., 1-5)
+                  const start = parseInt(rangeMatch[1], 10);
+                  const end = parseInt(rangeMatch[2], 10);
+                  
+                  for (let i = start; i <= end; i++) {
+                    phaseObj.tasks.push(i);
+                  }
+                } else if (/^\d+$/.test(range.trim())) {
+                  // Single task
+                  phaseObj.tasks.push(parseInt(range.trim(), 10));
+                }
+              }
+            }
+            
+            phases.push(phaseObj);
+          }
+        }
+      }
+    }
+    
+    return {
+      title: `Task Breakdown for ${projectName}`,
+      tasks,
+      phases,
+      sections,
+      createdAt: new Date().toISOString()
+    };
+  }
+  
+  /**
+   * Analyze project requirements
+   * 
+   * @param {Object} task - Requirements analysis task
+   * @returns {Object} Requirements analysis
+   */
+  async analyzeRequirements(task) {
+    logger.info('Analyzing project requirements');
+    
+    if (!task.requirements) {
+      throw new Error('Task must include requirements field');
+    }
+    
+    const requirements = task.requirements;
+    const projectName = task.projectName || 'New Project';
+    
+    // Prepare the prompt for the model
+    const prompt = `
+# Task: Analyze Project Requirements
+
+## Project Information
+- Project Name: ${projectName}
+
+## Requirements
+${typeof requirements === 'object' ? JSON.stringify(requirements, null, 2) : requirements}
+
+## Instructions
+Please analyze the provided project requirements and provide a detailed assessment. 
+Your analysis should include:
+
+1. **Completeness Assessment** - Are the requirements complete? Identify any missing information.
+2. **Clarity Assessment** - Are the requirements clear and unambiguous?

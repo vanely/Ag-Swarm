@@ -1,0 +1,253 @@
+{
+  "availableModels": {
+    "gpt-5": {
+      "provider": "openai",
+      "capabilities": [
+        "code-generation",
+        "reasoning",
+        "planning",
+        "debugging"
+      ],
+      "contextLength": 128000,
+      "costPer1kTokens": {
+        "input": 0.01,
+        "output": 0.03
+      },
+      "performance": {
+        "sweBenchScore": 74.9,
+        "latencyMs": 3000,
+        "reliabilityScore": 0.98
+      },
+      "preferred": true
+    },
+    "gpt-5-fast": {
+      "provider": "openai",
+      "capabilities": [
+        "code-generation",
+        "reasoning",
+        "planning"
+      ],
+      "contextLength": 128000,
+      "costPer1kTokens": {
+        "input": 0.005,
+        "output": 0.015
+      },
+      "performance": {
+        "sweBenchScore": 70.2,
+        "latencyMs": 1200,
+        "reliabilityScore": 0.97
+      },
+      "preferred": true
+    },
+    "claude-opus-4.1": {
+      "provider": "anthropic",
+      "capabilities": [
+        "code-generation",
+        "reasoning",
+        "planning",
+        "documentation"
+      ],
+      "contextLength": 200000,
+      "costPer1kTokens": {
+        "input": 0.015,
+        "output": 0.075
+      },
+      "performance": {
+        "sweBenchScore": 74.5,
+        "latencyMs": 4000,
+        "reliabilityScore": 0.99
+      },
+      "preferred": true
+    },
+    "claude-sonnet-4": {
+      "provider": "anthropic",
+      "capabilities": [
+        "code-generation",
+        "reasoning"
+      ],
+      "contextLength": 128000,
+      "costPer1kTokens": {
+        "input": 0.003,
+        "output": 0.015
+      },
+      "performance": {
+        "sweBenchScore": 68.8,
+        "latencyMs": 1800,
+        "reliabilityScore": 0.97
+      },
+      "preferred": false
+    },
+    "grok-4": {
+      "provider": "grok",
+      "capabilities": [
+        "code-generation",
+        "reasoning",
+        "planning"
+      ],
+      "contextLength": 128000,
+      "costPer1kTokens": {
+        "input": 0.008,
+        "output": 0.024
+      },
+      "performance": {
+        "sweBenchScore": 72.3,
+        "latencyMs": 2500,
+        "reliabilityScore": 0.96
+      },
+      "preferred": true
+    }
+  },
+  "modelRouting": {
+    "rules": [
+      {
+        "taskType": "system-architecture",
+        "preferredModel": "claude-opus-4.1",
+        "fallbacks": [
+          "gpt-5",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "requirements-analysis",
+        "preferredModel": "claude-opus-4.1",
+        "fallbacks": [
+          "gpt-5",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "frontend-development",
+        "preferredModel": "gpt-5",
+        "fallbacks": [
+          "claude-opus-4.1",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "backend-development",
+        "preferredModel": "claude-opus-4.1",
+        "fallbacks": [
+          "gpt-5",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "database-design",
+        "preferredModel": "gpt-5",
+        "fallbacks": [
+          "claude-opus-4.1",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "api-design",
+        "preferredModel": "claude-opus-4.1",
+        "fallbacks": [
+          "gpt-5",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "devops",
+        "preferredModel": "gpt-5",
+        "fallbacks": [
+          "grok-4",
+          "claude-opus-4.1"
+        ]
+      },
+      {
+        "taskType": "security-analysis",
+        "preferredModel": "claude-opus-4.1",
+        "fallbacks": [
+          "gpt-5",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "testing",
+        "preferredModel": "grok-4",
+        "fallbacks": [
+          "gpt-5",
+          "claude-opus-4.1"
+        ]
+      },
+      {
+        "taskType": "documentation",
+        "preferredModel": "claude-opus-4.1",
+        "fallbacks": [
+          "gpt-5",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "code-review",
+        "preferredModel": "gpt-5",
+        "fallbacks": [
+          "claude-opus-4.1",
+          "grok-4"
+        ]
+      },
+      {
+        "taskType": "debugging",
+        "preferredModel": "gpt-5",
+        "fallbacks": [
+          "grok-4",
+          "claude-opus-4.1"
+        ]
+      },
+      {
+        "taskType": "project-coordination",
+        "preferredModel": "gpt-5",
+        "fallbacks": [
+          "claude-opus-4.1",
+          "grok-4"
+        ]
+      }
+    ],
+    "dynamicRouting": {
+      "enabled": true,
+      "learningRate": 0.1,
+      "evaluationInterval": 3600000,
+      "metricsToConsider": [
+        "successRate",
+        "latency",
+        "cost"
+      ]
+    }
+  },
+  "promptTemplates": {
+    "systemPrompts": {
+      "planningAgent": "You are the Strategic Planning Agent ('The Architect'), a senior technical architect with 20+ years of experience. Your role is to generate detailed PRDs from business requirements, create system architecture and technical specifications, and decompose complex projects into agent-assignable tasks.",
+      "frontendAgent": "You are the Frontend Development Agent ('The UI Specialist'), a senior React/TypeScript developer with design sensibility. Your role is to build React components, admin interfaces, user dashboards, implement responsive design and accessibility standards, and integrate with backend APIs and real-time data streams.",
+      "backendAgent": "You are the Backend Development Agent ('The API Builder'), a senior backend engineer with microservices expertise. Your role is to design and implement REST/GraphQL APIs, handle database schema design and optimization, and implement business logic and data processing.",
+      "devopsAgent": "You are the DevOps Integration Agent ('The Pipeline Master'), a senior DevOps engineer with cloud-native expertise. Your role is to handle Docker containerization and Kubernetes orchestration, CI/CD pipeline setup and optimization, and infrastructure as code and deployment automation.",
+      "securityAgent": "You are the Security Validation Agent ('The Guardian'), a 15-year security veteran with enterprise compliance experience. Your role is to perform code security analysis and vulnerability assessment, implement enterprise authentication and authorization, and handle compliance documentation and security audits.",
+      "qaAgent": "You are the Quality Assurance Agent ('The Critic'), a senior QA engineer with test automation expertise. Your role is to develop comprehensive testing strategies and implementation, conduct code review and quality validation, and perform performance testing and optimization recommendations.",
+      "coordinationAgent": "You are the Project Coordination Agent ('The Conductor'), a technical project manager with agile expertise. Your role is to handle task orchestration and dependency management, track progress and identify bottlenecks, and optimize resource allocation and timeline management."
+    },
+    "taskPrompts": {
+      "generatePRD": "Based on the following business requirements, generate a comprehensive Product Requirements Document (PRD) that includes detailed feature specifications, user stories, acceptance criteria, and technical considerations:\n\n{requirements}",
+      "createArchitecture": "Based on the following PRD, create a detailed system architecture document that includes component diagrams, data flow, API specifications, database schema, and technology stack recommendations:\n\n{prd}",
+      "decomposeTasks": "Based on the following architecture document, decompose the project into discrete, assignable tasks with clear dependencies, estimated effort, and specialized skill requirements:\n\n{architecture}",
+      "implementFrontend": "Implement the following frontend component according to the specifications and design guidelines provided. The component should be responsive, accessible, and integrate with the backend API:\n\n{specification}",
+      "implementBackend": "Implement the following backend API endpoint according to the specifications provided. The implementation should include proper error handling, validation, security considerations, and database interactions:\n\n{specification}",
+      "setupDevOps": "Create the DevOps configuration for the following component/service. This should include Dockerfile, Kubernetes manifests, CI/CD pipeline configuration, and any necessary infrastructure as code:\n\n{specification}",
+      "securityReview": "Perform a comprehensive security review of the following code/system. Identify potential vulnerabilities, recommend mitigations, and ensure compliance with security best practices and requirements:\n\n{codeOrSystem}",
+      "qualityAssurance": "Review the following code for quality issues. Check for bugs, performance concerns, maintainability issues, and adherence to best practices. Create appropriate tests to validate functionality:\n\n{code}",
+      "coordinatePhase": "Coordinate the following phase of the project. Track progress, identify bottlenecks, manage dependencies, and ensure all tasks are completed according to specifications:\n\n{phaseDetails}"
+    }
+  },
+  "tokenUsage": {
+    "tracking": {
+      "enabled": true,
+      "perAgent": true,
+      "perTask": true,
+      "costCalculation": true
+    },
+    "limits": {
+      "maxDailyTokens": 10000000,
+      "warningThreshold": 0.8,
+      "alertThreshold": 0.95
+    }
+  }
+}
