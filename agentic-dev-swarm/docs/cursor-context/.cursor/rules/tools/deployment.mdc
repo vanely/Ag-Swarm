@@ -1,0 +1,362 @@
+---
+description: CI/CD, runtime, and observability standards for safe delivery
+globs: "**/*"
+priority: high
+---
+
+# Deployment & Operations
+
+## Overview
+Automate build → test → scan → deploy across environments on Kubernetes, with encrypted secrets, RBAC, and full telemetry. This ensures consistent, secure, and observable deployments with minimal human intervention and maximum reliability.
+
+## Requirements
+- CI Pipeline stages (GitHub Actions) must include:
+  - **Lint**: Code style and quality checks
+  - **Unit Tests**: Component-level testing
+  - **Integration/Contract Tests**: Service interaction testing
+  - **E2E Tests**: Full system flow testing
+  - **SAST**: Static Application Security Testing
+  - **DAST**: Dynamic Application Security Testing (where applicable)
+  - **Coverage Gate**: Enforce minimum test coverage
+  - **Container Build**: Build and tag container images
+  - **Container Scan**: Vulnerability scanning of containers
+  - **Container Signing**: Sign containers for chain of custody
+  - **Deploy**: Automated deployment to environments
+
+- Runtime requirements (Kubernetes):
+  - Use least-privilege service accounts
+  - Implement network policies for microsegmentation
+  - Store secrets in encrypted form (Kubernetes Secrets/Vault)
+  - Set resource limits for all containers
+  - Configure liveness and readiness probes
+  - Implement pod disruption budgets
+  - Use node affinity and anti-affinity rules
+  - Configure horizontal pod autoscaling
+
+- Observability stack must include:
+  - **Metrics**: Prometheus for metric collection
+  - **Logs**: ELK stack for log aggregation
+  - **Traces**: Distributed tracing with Jaeger/OpenTelemetry
+  - **Dashboards**: Grafana for visualization
+  - **Alerts**: Alerting rules tied to SLOs
+  - **Synthetic monitoring**: Uptime and canary checks
+  - **Error tracking**: Exception monitoring and aggregation
+  - **SLO tracking**: Performance against service level objectives
+
+- Release management requirements:
+  - Implement staged rollouts (canary/blue-green)
+  - Automate health validation during deployment
+  - Configure instant rollback capabilities
+  - Use feature flags for gradual exposure
+  - Document release notes and changelog
+  - Notify stakeholders of deployments
+  - Track deployment metrics (frequency, success rate)
+
+- Disaster recovery requirements:
+  - Document backup procedures and schedules
+  - Create restore runbooks and automation
+  - Conduct regular recovery testing
+  - Implement multi-region resilience where needed
+  - Document RTO (Recovery Time Objective) and RPO (Recovery Point Objective)
+  - Conduct regular game day exercises
+  - Create incident response playbooks
+
+## Examples
+
+### ✅ Good Example
+```yaml
+# .github/workflows/main.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run ESLint
+        run: npm run lint
+      - name: Run Prettier check
+        run: npm run format:check
+
+  test:
+    name: Test
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run unit tests
+        run: npm run test:unit
+      - name: Run integration tests
+        run: npm run test:integration
+      - name: Check test coverage
+        run: npm run test:coverage
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+
+  security-scan:
+    name: Security Scan
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run SAST with SonarCloud
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Run dependency check
+        run: npm audit --audit-level=high
+      - name: Run secret scanning
+        uses: gitleaks/gitleaks-action@v2
+
+  build:
+    name: Build and Publish
+    needs: security-scan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Login to Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }},ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Scan container
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'ghcr.io/${{ github.repository }}:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+      - name: Sign container image
+        uses: sigstore/cosign-installer@main
+        with:
+          cosign-release: 'v1.13.0'
+      - run: |
+          cosign sign --key env://COSIGN_PRIVATE_KEY ghcr.io/${{ github.repository }}:${{ github.sha }}
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.example.com
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Kubernetes tools
+        uses: azure/setup-kubectl@v3
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+      - name: Set Kubernetes context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_DATA }}
+          context: staging-cluster
+      - name: Deploy to Staging
+        run: |
+          # Update Helm release with canary deployment
+          helm upgrade --install myapp ./helm/myapp \
+            --set image.repository=ghcr.io/${{ github.repository }} \
+            --set image.tag=${{ github.sha }} \
+            --set canary.enabled=true \
+            --set canary.weight=20 \
+            --namespace staging \
+            --atomic --timeout 5m
+      - name: Verify Deployment
+        run: |
+          # Wait for deployment to stabilize
+          kubectl rollout status deployment/myapp -n staging --timeout=300s
+          
+          # Run synthetic checks
+          ./scripts/run-smoke-tests.sh https://staging.example.com
+          
+          # Check error rate
+          ERROR_RATE=$(curl -s "http://prometheus:9090/api/v1/query?query=sum(rate(http_requests_total{status_code=~\"5..\"}[5m]))/sum(rate(http_requests_total[5m]))" | jq -r '.data.result[0].value[1]')
+          if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+            echo "Error rate too high: $ERROR_RATE"
+            exit 1
+          fi
+          
+          # Check latency
+          P95_LATENCY=$(curl -s "http://prometheus:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(http_request_duration_seconds_bucket[5m]))by(le))" | jq -r '.data.result[0].value[1]')
+          if (( $(echo "$P95_LATENCY > 0.5" | bc -l) )); then
+            echo "Latency too high: $P95_LATENCY"
+            exit 1
+          fi
+      - name: Promote Canary
+        if: success()
+        run: |
+          # Promote canary to 100%
+          helm upgrade myapp ./helm/myapp \
+            --set image.repository=ghcr.io/${{ github.repository }} \
+            --set image.tag=${{ github.sha }} \
+            --set canary.enabled=false \
+            --namespace staging \
+            --atomic --timeout 5m
+
+  deploy-production:
+    name: Deploy to Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://example.com
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Kubernetes tools
+        uses: azure/setup-kubectl@v3
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+      - name: Set Kubernetes context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_DATA }}
+          context: production-cluster
+      - name: Deploy to Production
+        run: |
+          # Update Helm release with canary deployment
+          helm upgrade --install myapp ./helm/myapp \
+            --set image.repository=ghcr.io/${{ github.repository }} \
+            --set image.tag=${{ github.sha }} \
+            --set canary.enabled=true \
+            --set canary.weight=5 \
+            --namespace production \
+            --atomic --timeout 5m
+      - name: Verify Deployment
+        run: |
+          # Wait for deployment to stabilize
+          kubectl rollout status deployment/myapp -n production --timeout=300s
+          
+          # Run synthetic checks
+          ./scripts/run-smoke-tests.sh https://example.com
+          
+          # Check error rate
+          ERROR_RATE=$(curl -s "http://prometheus:9090/api/v1/query?query=sum(rate(http_requests_total{status_code=~\"5..\"}[5m]))/sum(rate(http_requests_total[5m]))" | jq -r '.data.result[0].value[1]')
+          if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+            echo "Error rate too high: $ERROR_RATE, rolling back"
+            helm rollback myapp -n production
+            exit 1
+          fi
+          
+          # Check latency
+          P95_LATENCY=$(curl -s "http://prometheus:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(http_request_duration_seconds_bucket[5m]))by(le))" | jq -r '.data.result[0].value[1]')
+          if (( $(echo "$P95_LATENCY > 0.2" | bc -l) )); then
+            echo "Latency too high: $P95_LATENCY, rolling back"
+            helm rollback myapp -n production
+            exit 1
+          fi
+      - name: Gradual Rollout
+        if: success()
+        run: |
+          # Gradually increase canary weight
+          for WEIGHT in 20 50 80 100; do
+            helm upgrade myapp ./helm/myapp \
+              --set image.repository=ghcr.io/${{ github.repository }} \
+              --set image.tag=${{ github.sha }} \
+              --set canary.enabled=true \
+              --set canary.weight=$WEIGHT \
+              --namespace production \
+              --atomic --timeout 5m
+            
+            # Wait and verify metrics
+            sleep 60
+            
+            # Run validation again
+            ERROR_RATE=$(curl -s "http://prometheus:9090/api/v1/query?query=sum(rate(http_requests_total{status_code=~\"5..\"}[5m]))/sum(rate(http_requests_total[5m]))" | jq -r '.data.result[0].value[1]')
+            if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+              echo "Error rate too high: $ERROR_RATE, rolling back"
+              helm rollback myapp -n production
+              exit 1
+            fi
+          done
+          
+          # Final promotion
+          helm upgrade myapp ./helm/myapp \
+            --set image.repository=ghcr.io/${{ github.repository }} \
+            --set image.tag=${{ github.sha }} \
+            --set canary.enabled=false \
+            --namespace production \
+            --atomic --timeout 5m
+      - name: Send Deployment Notification
+        if: success()
+        uses: slackapi/slack-github-action@v1
+        with:
+          channel-id: 'deployments'
+          slack-message: "Deployment to Production Successful! :rocket:\nVersion: ${{ github.sha }}\nChangelog: https://github.com/${{ github.repository }}/releases/tag/${{ github.sha }}"
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+```
+
+### ❌ Bad Example
+```bash
+# deploy.sh - Bad example
+
+#!/bin/bash
+# No automated testing
+# No security scanning
+# Direct deployment to production
+
+# Manual build without version tracking
+npm run build
+
+# Direct deployment without health checks or rollback capability
+scp -r build/* user@production-server:/var/www/html/
+
+echo "Deployed to production!"
+
+# No monitoring or verification
+# No notification
+# No documentation
+# No rollback procedure
+```
+
+## Implementation Notes
+- Attach dashboards and runbooks to every service; verify hooks in CI before promotion
+- Use infrastructure as code for all environments
+- Implement GitOps workflows for infrastructure changes
+- Create deployment dashboards for real-time visibility
+- Document all deployment procedures and runbooks
+- Set up automated post-deployment testing
+- Implement chaos engineering practices
+- Use feature flags for safer deployments
+- Configure automated rollbacks for failed deployments
+- Measure deployment frequency and mean time to recovery
+- Conduct regular disaster recovery drills

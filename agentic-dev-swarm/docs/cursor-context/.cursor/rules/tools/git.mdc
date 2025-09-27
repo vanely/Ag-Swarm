@@ -1,0 +1,217 @@
+---
+description: Git workflow that supports parallel agents with safe integration
+globs: "**/*"
+priority: high
+---
+
+# Git Workflow
+
+## Overview
+
+Define branching and PR discipline aligned with automated quality gates and multi-agent review. This ensures safe, traceable code changes with proper validation and review before integration into the main codebase, supporting parallel agent development.
+
+## Requirements
+
+Use trunk-based development with short-lived feature branches:
+
+- `feat/*`: New features or enhancements
+
+- `fix/*`: Bug fixes
+
+- `chore/*`: Maintenance tasks, dependency updates
+
+- `docs/*`: Documentation updates
+
+- `refactor/*`: Code refactoring without functionality change
+
+- `test/*`: Test additions or modifications
+
+- `perf/*`: Performance improvements
+
+Pull Request (PR) requirements:
+
+- All automated tests must pass
+
+- Security scan must pass with no critical or high findings
+
+- Code coverage must be ≥80% for new/modified code
+
+Require approval from:
+
+- At least one Critic agent
+
+- Security Specialist for security-sensitive changes
+
+- Domain expert for specialized components
+
+Protected paths require additional approvals
+Enforce branch protection on `main`/`master`
+
+Enforce conventional commit messages:
+
+- Format: `<type>(<scope>): <subject>`
+
+- Types: `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `perf`, `test`
+
+- Body describes the motivation for the change
+
+- Footer references issues and breaking changes
+
+- Automated changelog generation from commits
+
+- Semantic versioning based on commit types
+
+Implement CODEOWNERS by component:
+
+- UI components: UI Specialist
+
+- API endpoints: API Builder
+
+- Infrastructure: Pipeline Master
+
+- Security-sensitive code: Security Specialist
+
+- Database schemas: Data Architect
+
+- Performance-critical paths: Speed Demon
+
+## Examples
+
+### ✅ Good Example
+
+```
+# Good Git Workflow Example
+
+# 1. Create a feature branch with descriptive name
+git checkout -b feat/search-autosuggest
+
+# 2. Make small, focused commits with conventional commit messages
+git commit -m "feat(search): implement basic query input component"
+git commit -m "feat(search): add type-ahead suggestion dropdown"
+git commit -m "test(search): add unit tests for suggestion filtering"
+git commit -m "perf(search): optimize suggestion rendering"
+
+# 3. Create a Pull Request with comprehensive description
+# PR Template:
+# ---
+# Title: feat(search): implement search autosuggest feature
+#
+# ## Description
+# Add search autosuggest functionality that displays suggestions as users type.
+# 
+# ## Implementation
+# - Created SearchInput component with query debouncing
+# - Added SuggestionDropdown component
+# - Implemented keyboard navigation
+# - Added suggestion highlighting
+# 
+# ## Testing
+# - Added unit tests for all components
+# - Added integration test for full search flow
+# - Verified keyboard accessibility
+# 
+# ## Performance
+# - Debounced inputs to reduce API calls
+# - Memoized suggestion rendering
+# - Current performance: 120ms response time
+# 
+# ## Security Considerations
+# - Sanitized input to prevent XSS
+# - Added rate limiting
+# 
+# ## Risks
+# - May increase load on search API
+# 
+# ## Rollback Plan
+# - Feature flag can be disabled
+# 
+# ## Screenshots
+# [Screenshot of autosuggest in action]
+# ---
+
+# 4. Address review feedback with fixup commits
+git commit --fixup HEAD~1 -m "fix(search): address review feedback on keyboard navigation"
+
+# 5. Squash fixups before merge
+git rebase -i --autosquash origin/main
+
+# 6. Ensure all checks pass before merge
+# - Automated tests
+# - Security scan
+# - Code coverage
+# - Linting
+# - Performance benchmarks
+
+# 7. Merge using squash or rebase strategy
+# (Done via PR UI after approvals)
+
+# 8. Generate release notes from commits
+# Example release notes:
+# ---
+# # Release v1.2.0
+# 
+# ## Features
+# - **Search**: Added autosuggest functionality (#123)
+# - **UI**: Improved responsive design for mobile (#124)
+# 
+# ## Bug Fixes
+# - Fixed pagination in search results (#125)
+# 
+# ## Performance
+# - Optimized suggestion rendering (#123)
+# ---
+```
+
+### ❌ Bad Example
+
+```
+# Bad Git Workflow Example
+
+# 1. Working directly on main branch
+git checkout main
+# Make changes directly on main
+
+# 2. Making large, unfocused commits with poor messages
+git add .
+git commit -m "search stuff"
+
+# 3. Force pushing to shared branches
+git push --force origin main
+
+# 4. Merging without code review
+git merge feature-branch --no-verify
+
+# 5. Bypassing CI/CD checks
+git push origin main --no-verify
+
+# 6. No PR template or documentation
+# PR Description: "Added search. Please review."
+
+# 7. No test coverage
+# Merging code with failing tests or no tests
+
+# 8. No versioning or release notes
+# Manual deployment without version tracking
+```
+
+## Implementation Notes
+
+- Use PR templates with checkboxes for the production readiness checklist
+
+- Configure branch protection rules in GitHub/GitLab
+
+- Set up automated linting and formatting in pre-commit hooks
+
+- Implement commit message validation
+
+- Configure automated release notes generation
+
+- Set up required status checks for PRs
+
+- Create dashboards for PR metrics (time to review, size, etc.)
+
+- Document the Git workflow in the project README
+
+- Provide examples of good commit messages and PR descriptions
+
+- Set up automatic stale PR detection and notifications

@@ -1,0 +1,295 @@
+---
+description: Planning protocol from PRD to decomposed, parallelizable work
+globs: "**/*"
+priority: high
+---
+
+# Planning Protocol
+
+## Overview
+
+The Planner (Architect) generates a comprehensive PRD and decomposes work into agent-assignable packages with explicit dependencies and timelines. This ensures that all work is properly scoped, sequenced, and assigned to the appropriate specialized agents, with clear quality gates and acceptance criteria.
+
+## Requirements
+
+PRD must include the following sections:
+
+- **Objectives**: Clear statement of goals and success metrics
+
+- **Non-functional requirements**: Performance, scalability, security
+
+- **Security and compliance notes**: Data handling, privacy, regulatory
+
+- **Key Performance Indicators (KPIs)**: Quantifiable metrics for success
+
+- **User stories or jobs-to-be-done**: Detailed scenarios
+
+- **UI/UX requirements**: Mockups, wireframes, interactions
+
+- **Technical constraints**: Compatibility, integrations, limitations
+
+- **Rollout strategy**: Phases, testing, monitoring
+
+System design artifacts must include:
+
+- Architecture diagrams (C4 model preferred)
+
+- Component interaction models
+
+- Data flow diagrams
+
+- Sequence diagrams for key flows
+
+- Technology stack choices with rationales
+
+- Integration points and API contracts
+
+- Architecture Decision Records (ADRs) for key decisions
+
+Work breakdown must include:
+
+Division into parallel tracks:
+
+- Frontend implementation
+
+- Backend/API development
+
+- Infrastructure and DevOps
+
+- Security and compliance
+
+- Documentation and training
+
+Clear dependencies between tasks
+Time estimates and deadlines
+Assignment to specific agent roles
+
+Quality gates must be defined for:
+
+- Individual tasks (unit tests, code review)
+
+- Integration points (contract tests, integration tests)
+
+- Overall readiness (performance, security, compliance)
+
+- User acceptance criteria
+
+- Production deployment readiness
+
+## Examples
+
+### ✅ Good Example
+
+```
+# Product Requirements Document: Search Functionality
+
+## 1. Objectives
+Implement a high-performance search feature that allows users to quickly find relevant content across the platform with type-ahead suggestions and filtering capabilities.
+
+### Success Metrics
+- Search response time <200ms p95
+- Relevant results in top 3 for 90% of queries
+- 30% reduction in time-to-find content
+
+## 2. Non-Functional Requirements
+- Performance: Results delivered within 200ms
+- Scalability: Support 100+ concurrent searches
+- Accessibility: Search interface meets WCAG 2.1 AA
+- Internationalization: Support for Unicode search terms
+
+## 3. Security & Compliance
+- No PII in search indexes
+- Search queries logged separately from user identifiers
+- GDPR right-to-be-forgotten applies to search history
+- Implement rate limiting to prevent abuse
+
+## 4. User Stories
+1. As a user, I want to see suggestions as I type so I can find content quickly
+2. As a user, I want to filter results by category so I can narrow my search
+3. As a user, I want to see highlighted matches so I can understand why a result appeared
+
+## 5. Technical Design
+### Architecture
+[Attached C4 diagram showing search service architecture]
+
+### Stack Choices
+- Search engine: Elasticsearch (chosen for performance and features)
+- Backend API: Node.js with Express
+- Frontend: React with custom search components
+- Caching: Redis for frequent queries
+
+### API Contracts
+```typescript
+// Search API Contract
+interface SearchRequest {
+  query: string;
+  filters?: {
+    category?: string[];
+    dateRange?: { start?: string; end?: string };
+    tags?: string[];
+  };
+  pagination: {
+    page: number;
+    pageSize: number;
+  };
+}
+
+interface SearchResponse {
+  results: Array<{
+    id: string;
+    title: string;
+    excerpt: string;
+    highlights: Array<{ field: string; snippet: string }>;
+    url: string;
+    metadata: Record<string, any>;
+  }>;
+  pagination: {
+    totalResults: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  };
+  suggestions: string[];
+}
+```
+
+## 6. Work Breakdown
+
+### Frontend Track (UI Specialist)
+
+- F1: Implement search input component with type-ahead [Estimated: 2 days]
+
+- F2: Build search results display with highlighting [Estimated: 2 days]
+
+- F3: Create filter interface for refinement [Estimated: 1 day]
+
+- F4: Add keyboard navigation and accessibility features [Estimated: 1 day]
+
+### Backend Track (API Builder)
+
+- B1: Design and implement search API endpoint [Estimated: 1 day]
+
+- B2: Build Elasticsearch integration [Estimated: 2 days]
+
+- B3: Implement filters and aggregations [Estimated: 1 day]
+
+- B4: Add caching layer for common queries [Estimated: 1 day]
+
+### Data Track (Data Architect)
+
+- D1: Design search index schema [Estimated: 1 day]
+
+- D2: Create indexing pipeline [Estimated: 2 days]
+
+- D3: Implement reindexing strategy [Estimated: 1 day]
+
+### DevOps Track (Pipeline Master)
+
+- P1: Set up Elasticsearch cluster [Estimated: 1 day]
+
+- P2: Configure monitoring and alerting [Estimated: 1 day]
+
+- P3: Implement CI/CD pipeline for search components [Estimated: 1 day]
+
+### Testing Track (Critic)
+
+- T1: Develop search quality evaluation metrics [Estimated: 1 day]
+
+- T2: Create integration test suite [Estimated: 2 days]
+
+- T3: Perform load testing [Estimated: 1 day]
+
+## 7. Dependencies
+
+- F1 depends on B1
+
+- B1 depends on D1
+
+- B2 depends on P1
+
+- T2 depends on F2, B3
+
+- T3 depends on P2, B4
+
+## 8. Quality Gates
+
+### Task-Level Gates
+
+- All code has unit tests with >80% coverage
+
+- Code review by at least one Critic agent
+
+- No security vulnerabilities from SAST scan
+
+### Integration Gates
+
+- API contract tests pass
+
+- Frontend integration tests pass
+
+- Performance requirements met
+
+### Release Gates
+
+- Load testing shows <200ms p95 response time
+
+- Security review complete
+
+- Accessibility audit passes
+
+- Documentation complete
+
+## 9. Timeline
+
+[Gantt chart showing 2-week implementation schedule with critical path]
+
+## 10. Readiness Checklist
+
+-  All quality gates passed
+
+-  Performance metrics within thresholds
+
+-  Security review complete
+
+-  Rollback plan documented and tested
+
+-  Monitoring and alerting configured
+
+-  Documentation updated
+
+```
+
+### ❌ Bad Example
+```markdown
+# Search Feature Plan
+
+Add search to the platform so users can find stuff.
+
+## Tasks
+1. Add a search box
+2. Make it work
+3. Test it
+
+## Timeline
+Get it done by next week.
+```
+
+## Implementation Notes
+
+- Keep PRDs and plans in version control; changes require Critic review
+
+- Use JIRA or similar for tracking tasks and dependencies
+
+- Create templates for PRDs and technical designs
+
+- Maintain a library of reference architectures and patterns
+
+- Schedule regular sync points for cross-team coordination
+
+- Document decisions and alternatives considered
+
+- Create dashboards for progress tracking
+
+- Use burndown charts for sprint/milestone tracking
+
+- Implement automated tests for acceptance criteria

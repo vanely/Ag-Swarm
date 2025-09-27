@@ -1,0 +1,91 @@
+---
+description: Deterministic code style + test-first defaults for multi-agent collaboration
+globs: "**/*.{js,jsx,ts,tsx,json,yml,yaml,md,mdx}"
+priority: high
+---
+
+# Code Style Baseline
+
+## Overview
+Enforce consistent, machine-checkable style so many agents can edit safely in parallel. Style must support automated quality gates and CI. All code must follow these standards to ensure agent swarms can collaborate without style conflicts and merge issues.
+
+## Requirements
+- Use TypeScript for all runtime code; JavaScript allowed only for generated stubs or legacy compatibility.
+- Enforce Prettier + ESLint (strict) configuration. No disabled rules in repo; use inline `eslint-disable-next-line` only with explicit justification comment.
+- Every module requires corresponding unit tests; target >80% code coverage repo-wide to satisfy readiness gates.
+- Enforce small, pure functions with clear responsibilities; cyclomatic complexity thresholds enforced via CI (Sonar-like checks).
+- All public APIs must include comprehensive JSDoc/TSDoc and example usage that passes test validation.
+- Maximum line length: 100 characters, with consistent indentation of 2 spaces.
+- Use named exports by default; limit default exports to class/component definitions.
+- Prefer composition over inheritance; avoid deep class hierarchies.
+
+## Examples
+
+### ✅ Good Example
+```ts
+// utils/string/slug.ts
+/**
+ * Converts user-facing names to URL-safe slugs.
+ *
+ * @param input - The string to convert to a slug
+ * @returns A URL-friendly lowercase slug with hyphens
+ *
+ * @example
+ * ```ts
+ * toSlug("Hello World"); // returns "hello-world"
+ * toSlug("  Multiple   Spaces  "); // returns "multiple-spaces"
+ * ```
+ */
+export function toSlug(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "") // Remove non-word chars
+    .replace(/[\s_-]+/g, "-") // Replace spaces and underscores with hyphens
+    .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
+}
+
+// utils/string/slug.test.ts
+import { toSlug } from './slug';
+
+describe('toSlug', () => {
+  test('converts spaces to hyphens', () => {
+    expect(toSlug("Hello World")).toBe("hello-world");
+  });
+  
+  test('trims extra whitespace', () => {
+    expect(toSlug("  Multiple   Spaces  ")).toBe("multiple-spaces");
+  });
+  
+  test('removes special characters', () => {
+    expect(toSlug("Special@#$Characters!")).toBe("specialcharacters");
+  });
+});
+```
+
+### ❌ Bad Example
+```ts
+// slug.ts
+export const a = (x) => { 
+  return x.split(" ").join("-").toLowerCase(); 
+  // No input validation
+  // No special character handling
+  // No tests
+  // Poor naming (a)
+  // No type annotations
+  // No JSDoc
+};
+
+// Usage elsewhere
+import { a } from './slug';
+// No clarity on what 'a' does without checking implementation
+```
+
+## Implementation Notes
+- Keep modules <200 LOC; split functionality into separate files when growing beyond this limit.
+- Prefer pure functions; isolate side-effects at edges (I/O, network, etc.).
+- Create dedicated folders for related functionality (e.g., `utils/string/`, `utils/number/`).
+- Maintain a comprehensive ESLint + Prettier configuration at the root level.
+- Use import aliases (via tsconfig.json) for cleaner imports between modules.
+- Implement automated lint/style checking in CI pipeline with pre-commit hooks.
+- In test files, organize tests by function and use descriptive test names that document behavior.

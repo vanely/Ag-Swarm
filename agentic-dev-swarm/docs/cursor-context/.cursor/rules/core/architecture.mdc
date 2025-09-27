@@ -1,0 +1,150 @@
+---
+description: System architecture guardrails for agentic development and ops
+globs: "**/*"
+priority: high
+---
+
+# Architecture Guardrails
+
+## Overview
+Ensure all solutions fit the reference stack and architectural patterns: orchestration (LangGraph/Swarms), message queues (Redis/Kafka), vector databases (Pinecone/Weaviate), Kubernetes for deployment, GitHub Actions for CI/CD, and centralized observability. These guardrails ensure compatibility, maintainability, and scalability across all agentic swarm outputs.
+
+## Requirements
+- **Messaging** between agents must use message queue infrastructure and explicit schemas:
+  - Use Redis for short-lived, high-frequency messaging
+  - Use Kafka for durable, event-sourced communication
+  - All messages must include schemas (Protobuf/Avro)
+  - No ad-hoc RPC or direct API calls between agent services
+  - Include correlation IDs for tracing request flows
+  - Implement dead-letter queues for failed messages
+
+- **Shared state** only via approved vector database and repository:
+  - Store embeddings and semantic data in Pinecone/Weaviate
+  - Include explicit provenance for all stored data
+  - Implement TTL (time-to-live) for all cached information
+  - Use optimistic concurrency control for updates
+  - Implement proper indexing for all query patterns
+
+- **Pipelines** must mirror production phases:
+  - Plan → Build (parallel tracks) → Integrate/Test → Deploy/Monitor
+  - Each phase must have explicit entry/exit criteria
+  - Automated gates between phases
+  - Visualization of pipeline status
+  - Notifications for pipeline events
+
+- **Security-by-design**:
+  - RBAC for all services and resources
+  - Microsegmentation of network traffic
+  - Encryption in transit and at rest
+  - Credential rotation and management
+  - Vulnerability scanning at build and runtime
+
+- **Observability**:
+  - Prometheus for metrics collection
+  - Grafana for dashboards and visualization
+  - ELK stack for log aggregation and analysis
+  - Distributed tracing for request flows
+  - Health checks and readiness probes for all services
+
+## Examples
+
+### ✅ Good Example
+```yaml
+# Event-driven agent communication
+# communication/agent-messaging.yaml
+
+# 1. Agent A publishes an event to the task queue
+apiVersion: messaging.agents.io/v1
+kind: Message
+metadata:
+  id: task-12345
+  correlationId: req-67890
+  timestamp: "2025-09-26T14:30:00Z"
+  producer: planner-agent
+spec:
+  type: "TASK.CREATED"
+  version: "1.0"
+  payload:
+    taskId: "task-12345"
+    taskType: "CODE.IMPLEMENTATION"
+    requirements:
+      - "Implement search endpoint"
+      - "Add pagination"
+      - "Include rate limiting"
+    priority: "high"
+    deadline: "2025-09-27T12:00:00Z"
+    dependencies: ["task-12344"]
+
+# 2. Agent B claims the task with visibility timeout
+apiVersion: messaging.agents.io/v1
+kind: Message
+metadata:
+  id: claim-12345
+  correlationId: req-67890
+  timestamp: "2025-09-26T14:30:05Z"
+  producer: api-builder-agent
+spec:
+  type: "TASK.CLAIMED"
+  version: "1.0"
+  payload:
+    taskId: "task-12345"
+    claimedBy: "api-builder-agent"
+    estimatedCompletion: "2025-09-26T16:00:00Z"
+
+# 3. Agent B completes work and reports
+apiVersion: messaging.agents.io/v1
+kind: Message
+metadata:
+  id: completion-12345
+  correlationId: req-67890
+  timestamp: "2025-09-26T15:45:00Z"
+  producer: api-builder-agent
+spec:
+  type: "TASK.COMPLETED"
+  version: "1.0"
+  payload:
+    taskId: "task-12345"
+    completedBy: "api-builder-agent"
+    artifacts:
+      - type: "CODE"
+        path: "src/api/search/endpoint.ts"
+        commit: "abc123"
+      - type: "TEST"
+        path: "src/api/search/endpoint.test.ts"
+        commit: "abc123"
+    metrics:
+      timeSpent: "PT1H15M"
+      testCoverage: 92
+      complexity: 14
+```
+
+### ❌ Bad Example
+```
+# Poor implementation - direct coupling, no schema, no queue
+# Agent coupling with direct file access
+
+# Agent A writes directly to a shared directory
+const result = processTask();
+fs.writeFileSync('/shared/outputs/task-12345.json', JSON.stringify(result));
+
+# Agent B directly polls for the file
+function checkForResults() {
+  if (fs.existsSync('/shared/outputs/task-12345.json')) {
+    const data = JSON.parse(fs.readFileSync('/shared/outputs/task-12345.json'));
+    // Process data...
+  } else {
+    // Try again later
+    setTimeout(checkForResults, 5000);
+  }
+}
+```
+
+## Implementation Notes
+- Generate architecture decision records (ADRs) for all significant decisions
+- Link architecture to tests and monitoring dashboards
+- Maintain service catalogs with ownership information
+- Document all API contracts and message schemas
+- Create reference implementations for common patterns
+- Implement architecture validation in CI pipeline
+- Review architecture quarterly for technical debt
+- Conduct regular load testing and chaos engineering exercises

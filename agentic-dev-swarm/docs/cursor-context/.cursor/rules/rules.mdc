@@ -1,0 +1,26 @@
+---
+description: Main rules hub that composes all Cursor rule packs for the agentic swarm project
+alwaysApply: false
+---
+# Agentic Development Swarm - Main Rules
+
+## Core Development Rules
+@import ./rules/core/code-style.mdc
+@import ./rules/core/general.mdc
+@import ./rules/core/architecture.mdc
+
+## Language-Specific Rules
+@import ./rules/language/javascript.mdc
+
+## Pattern-Specific Rules
+@import ./rules/patterns/agent-communication.mdc
+@import ./rules/patterns/error-handling.mdc
+@import ./rules/patterns/task-routing.mdc
+
+## Planning Rules
+@import-if-plan ./rules/planning/plan-generic.mdc
+@import-if-specs ./rules/planning/plan-specs.mdc
+
+## Tool-Specific Rules
+@import-if-git ./rules/tools/git.mdc
+@import ./rules/tools/deployment.mdc

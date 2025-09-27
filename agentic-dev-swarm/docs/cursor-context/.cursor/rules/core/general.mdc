@@ -1,0 +1,134 @@
+---
+description: Project-wide principles for agent swarms
+globs: "**/*"
+priority: high
+---
+
+# General Principles
+
+## Overview
+
+All work in this agentic development swarm must align to the three-pillar foundation: intelligent model orchestration, specialized agent roles, and engineering oversight/guardrails. These principles establish the framework for how agents collaborate, how quality is maintained, and how the system ensures production readiness and security.
+
+## Requirements
+
+**Operate by roles** (Planner → Coder → Critic) with parallel execution and dynamic replanning. Each agent must respect its specialized role boundary:
+
+- **Planner/Architect**: Designs systems, creates PRDs, specifies APIs
+
+- **Coder**: Implements specifications, writes tests, documents code
+
+- **Critic**: Reviews code, enforces standards, blocks merges until quality gates pass
+
+- **Security Specialist**: Performs security reviews, manages secrets, enforces Zero Trust
+
+- **UI Specialist**: Designs and implements frontend components
+
+- **API Builder**: Creates API endpoints and integration points
+
+- **Pipeline Master**: Manages deployment pipelines and infrastructure
+
+- **Speed Demon**: Optimizes for performance when SLOs are at risk
+
+**Quality gates** at each stage: self-review → peer review → specialized (security) → human gate. All changes must pass through these sequential gates before promotion.
+**Production readiness** is non-negotiable with the following requirements:
+
+- Security scan results with 0 critical findings
+
+- Test coverage >80% across all modules
+
+- Performance within defined SLOs
+
+- Comprehensive monitoring and alerting
+
+- Complete documentation and runbooks
+
+- Proven rollback capability
+
+**Zero Trust** defaults, including:
+
+- Least privilege access for all components
+
+- Secrets encrypted at rest and in transit
+
+- Comprehensive audit trails
+
+- No implicit trust between services
+
+- Multi-factor auth for privileged operations
+
+**Rollback-capable** changes; always safe-to-revert with:
+
+- Database migration rollback scripts
+
+- Versioned APIs
+
+- Feature flags for gradual rollout
+
+- Immutable infrastructure
+
+- Backup and restore procedures
+
+## Examples
+
+### ✅ Good Example
+
+```
+Feature: Implement user search with autocomplete
+
+Planning:
+1. Planner breaks epic into agent-assignable tasks:
+   - Design API contract (Planner)
+   - Implement backend search endpoint (API Builder)
+   - Create frontend search component (UI Specialist)
+   - Set up caching layer (Speed Demon)
+   - Add security controls (Security Specialist)
+   - Configure monitoring (Pipeline Master)
+
+Execution:
+2. API Builder implements search endpoint with tests, docs
+3. UI Specialist builds frontend component in parallel
+4. Speed Demon optimizes query performance
+5. Security Specialist adds auth controls and audit logs
+6. Pipeline Master configures monitoring dashboard
+
+Quality Gates:
+7. Each agent performs self-review with automated checks
+8. Critic reviews all code changes, suggests improvements
+9. Security Specialist approves auth implementation
+10. Human stakeholder validates against requirements
+
+Deployment:
+11. Pipeline Master deploys with canary release (10% traffic)
+12. Monitoring confirms performance meets SLOs
+13. Rollout proceeds to 100% with feature flag control
+14. Rollback plan documented and validated
+```
+
+### ❌ Bad Example
+
+```
+- Direct merge to `main` without tests or security review
+- Single agent attempting to implement entire feature
+- Manual deployment without rollback capability
+- No metrics or monitoring configured
+- Missing documentation or runbooks
+- Dependencies between services not explicitly declared
+- Security as an afterthought rather than by design
+```
+
+## Implementation Notes
+
+- Use task boards/dashboards to visualize dependencies and gates
+
+- Track quality metrics across all repositories
+
+- Maintain a shared readiness checklist template
+
+- Document clear role boundaries and responsibilities
+
+- Implement automated quality gates in CI/CD pipelines
+
+- Create central repository for architectural decisions
+
+- Maintain living documentation that evolves with the codebase
